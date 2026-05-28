@@ -7,6 +7,7 @@ import streamlit as st
 from datetime import date
 from modules import database as db
 from modules.styles import DAY_CONFIG, DAY_COLORS, CONTENT_STATUSES
+from modules import sheets as sh
 
 TASKS_PER_DAY = 3
 
@@ -320,7 +321,7 @@ def render_thursday(events):
 # ── Friday — Finance ──────────────────────────────────────────────────────────
 
 # Update these URLs to your actual links
-EXCEL_SHEET_URL = ""   # ← paste your Google Sheets / OneDrive URL here
+EXCEL_SHEET_URL = sh.SHEET_URL   # pulled from sheets.py
 
 # Friday checklist
 FRIDAY_CHECKLIST = [
@@ -493,7 +494,7 @@ def _call_claude_api(messages, use_web_search=False):
 
 
 def _render_fa_analyser():
-    """Tool 1 — FA Analyser: ticker input → Claude API with web search."""
+    """Tool 1 — FA Analyser: ticker input -> Claude API with web search -> save to Google Sheet."""
     st.markdown('<div class="section-label">📊 FA Analyser — Powered by Claude</div>', unsafe_allow_html=True)
 
     with st.expander("Run Fundamental Analysis", expanded=False):
@@ -513,40 +514,54 @@ def _render_fa_analyser():
                 label_visibility="collapsed"
             )
 
-        st.caption("Fetches live data via web search. Takes 30–60 seconds.")
+        st.caption("Fetches live data via web search. Takes 30-60 seconds.")
 
         if st.button("▶  Run FA Analysis", key="fa_run_btn", use_container_width=True):
             if not ticker.strip():
                 st.warning("Enter a stock ticker first.")
             else:
-                with st.spinner(f"Researching {ticker.upper()} — fetching live data, this takes ~30s…"):
+                with st.spinner("Researching " + ticker.upper() + " — fetching live data, this takes ~30s…"):
                     messages = {
                         "system": FA_SYSTEM_PROMPT,
                         "messages": [
                             {
                                 "role": "user",
-                                "content": f"Stock: {ticker.strip().upper()}\nInvestment horizon: {horizon}\n\nPlease run the full fundamental analysis."
+                                "content": "Stock: " + ticker.strip().upper() + "\nInvestment horizon: " + horizon + "\n\nPlease run the full fundamental analysis."
                             }
                         ]
                     }
                     result = _call_claude_api(messages, use_web_search=True)
-                    st.session_state["fa_result"] = result
+                    st.session_state["fa_result"]      = result
                     st.session_state["fa_ticker_done"] = ticker.upper()
+                    st.session_state["fa_horizon_done"] = horizon
 
         # Show result if available
         if st.session_state.get("fa_result"):
             st.markdown("---")
-            st.markdown(f"**{st.session_state.get('fa_ticker_done', '')} — Fundamental Analysis**")
+            done_ticker  = st.session_state.get("fa_ticker_done", "")
+            done_horizon = st.session_state.get("fa_horizon_done", "")
+            st.markdown("**" + done_ticker + " — Fundamental Analysis (" + done_horizon + ")**")
             st.markdown(st.session_state["fa_result"])
 
-            # Save to holdings notes button
             st.markdown("<div style='margin-top:1rem'></div>", unsafe_allow_html=True)
-            if st.button("💾  Save summary to Holdings notes", key="fa_save_btn"):
-                ticker_done = st.session_state.get("fa_ticker_done", "UNKNOWN")
-                # Save first 500 chars as notes to keep it concise
-                summary = st.session_state["fa_result"][:500] + "…"
-                db.add_finance(ticker_done, ftype="research", notes=summary)
-                st.success(f"Saved {ticker_done} analysis to Research Notes.")
+
+            # Save to Google Sheet button
+            if st.button("💾  Save to Google Sheet → FA Results tab", key="fa_save_sheet_btn", use_container_width=True):
+                with st.spinner("Saving to Google Sheet…"):
+                    success, msg = sh.save_fa_result_to_sheet(
+                        done_ticker,
+                        done_horizon,
+                        st.session_state["fa_result"]
+                    )
+                if success:
+                    st.success(msg)
+                    # Open sheet link
+                    st.markdown(
+                        '<a href="' + sh.SHEET_URL + '" target="_blank" style="font-size:0.85rem;color:#1D4E89">Open Google Sheet ↗</a>',
+                        unsafe_allow_html=True
+                    )
+                else:
+                    st.warning(msg)
 
 
 def _render_results_analyser():
@@ -707,6 +722,59 @@ def render_friday(events):
     _render_results_analyser()
 
     # ── Portfolio & Watchlist ─────────────────────────────────────────────────
+    # Live Positions from Google Sheet
+    st.markdown('<div class="section-label">Live Positions — Google Sheet</div>', unsafe_allow_html=True)
+    sl = sh.SHEET_URL
+    st.markdown(
+        f'<a href="{sl}" target="_blank" style="display:inline-block;padding:0.55rem 1rem;'
+        f'background:#FFF;border:1px solid #E2E0DC;border-radius:8px;text-decoration:none;'
+        f'color:#1A1A1A;font-size:0.85rem;margin-bottom:0.8rem">📊 Open Google Sheet ↗</a>',
+        unsafe_allow_html=True
+    )
+    if st.button("↻ Refresh", key="refresh_pos"):
+        st.cache_data.clear()
+        st.rerun()
+
+    @st.cache_data(ttl=300)
+    def _load_pos():
+        return sh.get_positions()
+
+    positions = _load_pos()
+    if not positions:
+        st.caption("Could not load — make sure sheet is shared as 'Anyone with link can view'.")
+    else:
+        hdr = (
+            '<div style="overflow-x:auto;margin:0.5rem 0 1.5rem 0">'
+            '<table style="width:100%;border-collapse:collapse;font-size:0.88rem">'
+            '<thead><tr style="border-bottom:2px solid #EBEBEB">'
+            '<th style="text-align:left;padding:8px 6px;color:#888;font-size:0.68rem;text-transform:uppercase">Symbol</th>'
+            '<th style="text-align:left;padding:8px 6px;color:#888;font-size:0.68rem;text-transform:uppercase">Entry</th>'
+            '<th style="text-align:left;padding:8px 6px;color:#888;font-size:0.68rem;text-transform:uppercase">Qty</th>'
+            '<th style="text-align:left;padding:8px 6px;color:#888;font-size:0.68rem;text-transform:uppercase">Date</th>'
+            '<th style="text-align:left;padding:8px 6px;color:#B5451B;font-size:0.68rem;text-transform:uppercase">Trail SL</th>'
+            '</tr></thead><tbody>'
+        )
+        rows = ""
+        for p in positions:
+            sym = str(p.get("Symbol", "")).strip()
+            ep  = str(p.get("Entry Price", "—"))
+            qty = str(p.get("Shares", "—"))
+            ed  = str(p.get("Entry Date", "—"))
+            tsl = str(p.get("Trailing SL", "—"))
+            td  = "style='padding:9px 6px;border-bottom:1px solid #F5F5F3'"
+            rows += (
+                f"<tr>"
+                f"<td {td} style='padding:9px 6px;border-bottom:1px solid #F5F5F3;font-weight:600'>{sym}</td>"
+                f"<td {td}>₹{ep}</td>"
+                f"<td {td}>{qty}</td>"
+                f"<td style='padding:9px 6px;border-bottom:1px solid #F5F5F3;color:#888;font-size:0.8rem'>{ed}</td>"
+                f"<td style='padding:9px 6px;border-bottom:1px solid #F5F5F3;color:#B5451B;font-weight:500'>{tsl}</td>"
+                f"</tr>"
+            )
+        st.markdown(hdr + rows + "</tbody></table></div>", unsafe_allow_html=True)
+        st.caption(f"{len(positions)} active positions · refreshes every 5 min")
+
+
     st.markdown('<div class="section-label">Portfolio & Watchlist</div>', unsafe_allow_html=True)
     tab_w, tab_h, tab_r = st.tabs(["Watchlist", "Holdings", "Research Notes"])
 
