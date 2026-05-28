@@ -346,39 +346,6 @@ TAG_COLORS = {
 
 
 
-def _call_claude_api(messages, use_web_search=False):
-    """Call Claude API and return the text response."""
-    import requests
-    import json
-
-    tools = []
-    if use_web_search:
-        tools = [{"type": "web_search_20250305", "name": "web_search"}]
-
-    payload = {
-        "model": "claude-sonnet-4-20250514",
-        "max_tokens": 4000,
-        "system": messages["system"],
-        "messages": messages["messages"],
-    }
-    if tools:
-        payload["tools"] = tools
-
-    response = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={"Content-Type": "application/json"},
-        json=payload,
-        timeout=120,
-    )
-
-    if response.status_code != 200:
-        return f"API error {response.status_code}: {response.text}"
-
-    data = response.json()
-    # Extract all text blocks from response
-    text_parts = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
-    return "\n\n".join(text_parts) if text_parts else "No response received."
-
 
 def render_friday(events):
     _page_header(4, "Finance & Markets Day")
@@ -454,10 +421,6 @@ def render_friday(events):
 
     st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
 
-    # ── AI Tools ──────────────────────────────────────────────────────────────
-    _render_fa_analyser()
-    st.markdown("<div style='margin-top:1rem'></div>", unsafe_allow_html=True)
-    _render_results_analyser()
 
     # ── Portfolio & Watchlist ─────────────────────────────────────────────────
     st.markdown('<div class="section-label">Portfolio & Watchlist</div>', unsafe_allow_html=True)
