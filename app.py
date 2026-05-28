@@ -1,520 +1,296 @@
+"""
+app.py — One Thing Forward: Personal Life OS
+Run with: streamlit run app.py
+"""
+
 import streamlit as st
-import json
-import os
-from datetime import date
+from datetime import date, datetime
 
-# ── Config ────────────────────────────────────────────────────────────────────
-TASKS_FILE = "tasks.json"
+from modules.database import init_db
+from modules.styles import get_css, DAY_CONFIG
+from modules.calendar_api import get_today_events
+from modules import day_views as dv
 
-DAY_CONFIG = {
-    0: {"name": "Monday",    "category": "Academics",                "emoji": "📚", "color": "#2D6A4F"},
-    1: {"name": "Tuesday",   "category": "Content Engine",           "emoji": "🎬", "color": "#1D4E89"},
-    2: {"name": "Wednesday", "category": "Self Help & Growth",       "emoji": "🌱", "color": "#6B4226"},
-    3: {"name": "Thursday",  "category": "Video Editing",            "emoji": "✂️",  "color": "#7B2D8B"},
-    4: {"name": "Friday",    "category": "Finance & Stock Analysis", "emoji": "📈", "color": "#B5451B"},
-    5: {"name": "Saturday",  "category": "Pending / Catch-up",       "emoji": "🔁", "color": "#5C5C5C"},
-    6: {"name": "Sunday",    "category": "Rest & Review",            "emoji": "☀️", "color": "#8B6914"},
-}
+# ── Page config (must be first Streamlit call) ────────────────────────────────
+st.set_page_config(
+    page_title="One Thing Forward",
+    page_icon="🎯",
+    layout="centered",
+    initial_sidebar_state="expanded",
+)
 
-TASKS_PER_DAY = 3
+# ── Init database on first run ────────────────────────────────────────────────
+init_db()
 
-# ── Data ──────────────────────────────────────────────────────────────────────
-def load_tasks():
-    if not os.path.exists(TASKS_FILE):
-        return default_tasks()
-    with open(TASKS_FILE, "r") as f:
-        return json.load(f)
+# ── Determine today ───────────────────────────────────────────────────────────
+today_key = date.today().weekday()  # 0=Mon … 6=Sun
+day_info  = DAY_CONFIG[today_key]
 
-def save_tasks(data):
-    with open(TASKS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+# ── Inject CSS (day-specific accent colour) ───────────────────────────────────
+st.markdown(get_css(today_key), unsafe_allow_html=True)
 
-def default_tasks():
-    return {
-        "0": [
-            {"id": 1,  "text": "Review lecture notes / textbook chapter", "done_count": 0, "retire": False},
-            {"id": 2,  "text": "Solve practice problems (30 min)",         "done_count": 0, "retire": False},
-            {"id": 3,  "text": "Watch one educational video / lecture",    "done_count": 0, "retire": False},
-            {"id": 4,  "text": "Update study schedule & goals",            "done_count": 0, "retire": False},
-        ],
-        "1": [
-            {"id": 10, "text": "Plan next 3 content ideas",                "done_count": 0, "retire": False},
-            {"id": 11, "text": "Write / draft one script or outline",      "done_count": 0, "retire": False},
-            {"id": 12, "text": "Schedule / batch social posts",            "done_count": 0, "retire": False},
-            {"id": 13, "text": "Review analytics & engagement",            "done_count": 0, "retire": False},
-        ],
-        "2": [
-            {"id": 20, "text": "Read 20 pages of a self-help book",        "done_count": 0, "retire": False},
-            {"id": 21, "text": "Journaling: weekly reflection (15 min)",   "done_count": 0, "retire": False},
-            {"id": 22, "text": "Physical activity / workout",              "done_count": 0, "retire": False},
-            {"id": 23, "text": "Meditation or breathwork (10 min)",        "done_count": 0, "retire": False},
-        ],
-        "3": [
-            {"id": 30, "text": "Cut & edit raw footage",                   "done_count": 0, "retire": False},
-            {"id": 31, "text": "Add transitions, text overlays, music",    "done_count": 0, "retire": False},
-            {"id": 32, "text": "Export & review final cut",                "done_count": 0, "retire": False},
-            {"id": 33, "text": "Organise project files & backups",         "done_count": 0, "retire": False},
-        ],
-        "4": [
-            {"id": 40, "text": "Review portfolio performance",             "done_count": 0, "retire": False},
-            {"id": 41, "text": "Read 2 financial news articles",           "done_count": 0, "retire": False},
-            {"id": 42, "text": "Log weekly expenses & budget check",       "done_count": 0, "retire": False},
-            {"id": 43, "text": "Research one stock / sector deep-dive",    "done_count": 0, "retire": False},
-        ],
-        "5": [
-            {"id": 50, "text": "Clear anything left from the week",        "done_count": 0, "retire": False},
-            {"id": 51, "text": "Reply to pending messages / emails",       "done_count": 0, "retire": False},
-            {"id": 52, "text": "Plan next week's priorities",              "done_count": 0, "retire": False},
-        ],
-        "6": [
-            {"id": 60, "text": "Weekly review: what went well?",           "done_count": 0, "retire": False},
-            {"id": 61, "text": "Recharge: walk, movie, family time",       "done_count": 0, "retire": False},
-            {"id": 62, "text": "Prep workspace for Monday",                "done_count": 0, "retire": False},
-        ],
-        "_next_id": 100,
-    }
-
-def get_today_key():
-    return str(date.today().weekday())
-
-def get_next_id(data):
-    nid = data.get("_next_id", 100)
-    data["_next_id"] = nid + 1
-    return nid
-
-# ── CSS ───────────────────────────────────────────────────────────────────────
-def inject_css():
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+with st.sidebar:
     st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500&display=swap');
-
-    /* ── Reset & base ── */
-    html, body, [class*="css"] {
-        font-family: 'Inter', sans-serif !important;
-    }
-
-    .stApp {
-        background-color: #FAFAF8 !important;
-        color: #1A1A1A !important;
-    }
-
-    /* Remove Streamlit default top padding */
-    .block-container {
-        padding-top: 2rem !important;
-        padding-bottom: 4rem !important;
-        max-width: 680px !important;
-    }
-
-    /* ── Header ── */
-    .otf-header {
-        padding: 3rem 0 2rem 0;
-        text-align: left;
-    }
-    .otf-eyebrow {
-        font-family: 'Inter', sans-serif;
-        font-size: 0.7rem;
-        font-weight: 500;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
-        color: #999;
-        margin-bottom: 0.5rem;
-    }
-    .otf-title {
-        font-family: 'Lora', serif;
-        font-size: 2.4rem;
-        font-weight: 600;
-        color: #1A1A1A;
-        line-height: 1.15;
-        margin: 0 0 0.3rem 0;
-    }
-    .otf-date {
-        font-size: 0.8rem;
-        color: #AAA;
-        font-weight: 300;
-    }
-    .otf-accent {
-        height: 2px;
-        width: 40px;
-        border-radius: 2px;
-        margin: 1.5rem 0 0 0;
-    }
-
-    /* ── Week strip ── */
-    .week-strip {
-        display: flex;
-        gap: 6px;
-        margin: 2rem 0 2.5rem 0;
-    }
-    .day-chip {
-        flex: 1;
-        text-align: center;
-        padding: 0.55rem 0.2rem;
-        border-radius: 10px;
-        background: #F0EFEC;
-        border: 1.5px solid transparent;
-    }
-    .day-chip.today {
-        background: #1A1A1A;
-        border-color: #1A1A1A;
-    }
-    .day-chip-emoji {
-        font-size: 1.05rem;
-        display: block;
-        margin-bottom: 3px;
-    }
-    .day-chip-label {
-        font-size: 0.55rem;
-        font-weight: 500;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #999;
-        display: block;
-    }
-    .day-chip.today .day-chip-label {
-        color: #FFF;
-    }
-
-    /* ── Section label ── */
-    .section-label {
-        font-size: 0.65rem;
-        font-weight: 500;
-        letter-spacing: 0.2em;
-        text-transform: uppercase;
-        color: #BBB;
-        margin: 2rem 0 1rem 0;
-    }
-
-    /* ── Task row ── */
-    .task-row {
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-        padding: 1.1rem 0;
-        border-bottom: 1px solid #EBEBEB;
-    }
-    .task-row:first-of-type {
-        border-top: 1px solid #EBEBEB;
-    }
-    .task-index {
-        font-family: 'Lora', serif;
-        font-size: 1.1rem;
-        color: #DDD;
-        min-width: 1.5rem;
-        font-style: italic;
-    }
-    .task-body {
-        flex: 1;
-    }
-    .task-text {
-        font-size: 1rem;
-        font-weight: 400;
-        color: #1A1A1A;
-        line-height: 1.45;
-    }
-    .task-meta {
-        font-size: 0.7rem;
-        color: #BBB;
-        margin-top: 2px;
-    }
-    .once-badge {
-        display: inline-block;
-        font-size: 0.6rem;
-        font-weight: 500;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
-        color: #C0392B;
-        background: #FDF0EF;
-        border-radius: 4px;
-        padding: 1px 6px;
-    }
-
-    /* ── Queue preview ── */
-    .queue-row {
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-        padding: 0.7rem 0;
-        border-bottom: 1px solid #F5F5F3;
-        opacity: 0.45;
-    }
-
-    /* ── Buttons ── */
-    div[data-testid="stButton"] > button {
-        font-family: 'Inter', sans-serif !important;
-        font-size: 0.82rem !important;
-        font-weight: 400 !important;
-        color: #555 !important;
-        background: #FFF !important;
-        border: 1px solid #E5E5E5 !important;
-        border-radius: 8px !important;
-        padding: 0.4rem 0.9rem !important;
-        transition: all 0.15s ease !important;
-        width: 100% !important;
-    }
-    div[data-testid="stButton"] > button:hover {
-        background: #F5F5F3 !important;
-        border-color: #CCC !important;
-        color: #1A1A1A !important;
-    }
-
-    /* ── Tabs ── */
-    .stTabs [data-baseweb="tab-list"] {
-        background: transparent !important;
-        border-bottom: 1px solid #E8E8E6 !important;
-        gap: 0 !important;
-        margin-bottom: 0 !important;
-    }
-    .stTabs [data-baseweb="tab"] {
-        background: transparent !important;
-        border: none !important;
-        border-bottom: 2px solid transparent !important;
-        border-radius: 0 !important;
-        color: #AAA !important;
-        font-family: 'Inter', sans-serif !important;
-        font-size: 0.72rem !important;
-        font-weight: 500 !important;
-        letter-spacing: 0.15em !important;
-        text-transform: uppercase !important;
-        padding: 0.6rem 1.2rem !important;
-        margin-right: 0.5rem !important;
-    }
-    .stTabs [aria-selected="true"] {
-        color: #1A1A1A !important;
-        border-bottom: 2px solid #1A1A1A !important;
-    }
-    .stTabs [data-baseweb="tab-panel"] {
-        padding-top: 0 !important;
-    }
-
-    /* ── Inputs ── */
-    .stTextInput > label, .stSelectbox > label, .stCheckbox > label span {
-        font-size: 0.8rem !important;
-        font-weight: 400 !important;
-        color: #666 !important;
-        letter-spacing: 0.03em !important;
-    }
-    .stTextInput input {
-        background: #FFF !important;
-        border: 1px solid #E0E0DC !important;
-        border-radius: 8px !important;
-        color: #1A1A1A !important;
-        font-size: 0.95rem !important;
-        font-family: 'Inter', sans-serif !important;
-        padding: 0.6rem 0.9rem !important;
-    }
-    .stTextInput input:focus {
-        border-color: #999 !important;
-        box-shadow: none !important;
-    }
-    div[data-baseweb="select"] > div {
-        background: #FFF !important;
-        border: 1px solid #E0E0DC !important;
-        border-radius: 8px !important;
-        color: #1A1A1A !important;
-        font-size: 0.9rem !important;
-    }
-    .stCheckbox label span {
-        color: #444 !important;
-        font-size: 0.88rem !important;
-    }
-
-    /* ── Expander (week view) ── */
-    details {
-        border: 1px solid #EBEBEB !important;
-        border-radius: 10px !important;
-        background: #FFF !important;
-        margin-bottom: 0.5rem !important;
-    }
-    summary {
-        font-size: 0.9rem !important;
-        font-weight: 500 !important;
-        color: #1A1A1A !important;
-        padding: 0.85rem 1rem !important;
-    }
-    .stExpander > details > div {
-        padding: 0 1rem 1rem 1rem !important;
-    }
-
-    /* ── Misc ── */
-    .stAlert {
-        border-radius: 8px !important;
-        font-size: 0.88rem !important;
-    }
-    p, .stMarkdown p {
-        color: #1A1A1A !important;
-    }
-    .stCaption, .stMarkdown small {
-        color: #999 !important;
-    }
-    </style>
+    <div style='padding: 1rem 0 0.5rem 0;'>
+        <div style='font-family: Lora, serif; font-size: 1.3rem; font-weight: 600; color: #1A1A1A;'>
+            One Thing Forward
+        </div>
+        <div style='font-size: 0.72rem; color: #AAA; margin-top: 4px;'>
+            Your personal life OS
+        </div>
+    </div>
+    <hr style='margin: 0.8rem 0;'>
     """, unsafe_allow_html=True)
 
-# ── Views ─────────────────────────────────────────────────────────────────────
-def view_today(data):
-    today_key = get_today_key()
-    day_info  = DAY_CONFIG[int(today_key)]
-    all_tasks = data.get(today_key, [])
-    active    = all_tasks[:TASKS_PER_DAY]
-    queued    = all_tasks[TASKS_PER_DAY:]
-
-    # Header
+    now = datetime.now()
     st.markdown(f"""
-    <div class="otf-header">
-        <div class="otf-eyebrow">{day_info['name']}</div>
-        <div class="otf-title">{day_info['emoji']}&nbsp;{day_info['category']}</div>
-        <div class="otf-date">{date.today().strftime('%A, %d %B %Y')}</div>
-        <div class="otf-accent" style="background:{day_info['color']}"></div>
+    <div style='font-size: 0.78rem; color: #888; margin-bottom: 1rem; line-height: 1.7;'>
+        <div>{now.strftime('%A, %d %B %Y')}</div>
+        <div style='font-size: 1rem; font-weight: 500; color: #1A1A1A;'>{now.strftime('%I:%M %p')}</div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Week strip
-    strip = '<div class="week-strip">'
-    for i, cfg in DAY_CONFIG.items():
-        cls = "day-chip today" if i == int(today_key) else "day-chip"
-        strip += (f'<div class="{cls}">'
-                  f'<span class="day-chip-emoji">{cfg["emoji"]}</span>'
-                  f'<span class="day-chip-label">{cfg["name"][:3]}</span>'
-                  f'</div>')
-    strip += '</div>'
-    st.markdown(strip, unsafe_allow_html=True)
-
-    # Active tasks
-    st.markdown('<div class="section-label">Focus — up to 3 tasks</div>', unsafe_allow_html=True)
-
-    if not active:
-        st.info("No tasks yet for today. Add some in the **Add Task** tab.")
-    else:
-        rows_html = ""
-        for i, task in enumerate(active):
-            badge = '<span class="once-badge">once</span>&nbsp;' if task.get("retire") else ""
-            done_note = f'Done {task["done_count"]}×' if task["done_count"] > 0 else "Recurring"
-            rows_html += f"""
-            <div class="task-row">
-                <span class="task-index">{i+1}</span>
-                <div class="task-body">
-                    <div class="task-text">{badge}{task['text']}</div>
-                    <div class="task-meta">{done_note}</div>
-                </div>
-            </div>"""
-        st.markdown(rows_html, unsafe_allow_html=True)
-
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        for task in active:
-            c1, c2 = st.columns([5, 1])
-            with c1:
-                if st.button(f"✓  Done  ·  {task['text'][:42]}{'…' if len(task['text'])>42 else ''}", key=f"done_{task['id']}"):
-                    mark_done(data, today_key, task["id"])
-                    st.rerun()
-            with c2:
-                if st.button("✕", key=f"del_{task['id']}"):
-                    delete_task(data, today_key, task["id"])
-                    st.rerun()
-
-    # Queue preview
-    if queued:
-        st.markdown('<div class="section-label">Coming up in queue</div>', unsafe_allow_html=True)
-        rows_html = ""
-        for task in queued:
-            rows_html += f"""
-            <div class="queue-row">
-                <span class="task-index">·</span>
-                <div class="task-text">{task['text']}</div>
-            </div>"""
-        st.markdown(rows_html, unsafe_allow_html=True)
-
-
-def view_week(data):
-    today_key = get_today_key()
-    st.markdown('<div class="section-label">Weekly Timetable</div>', unsafe_allow_html=True)
-
-    for day_idx, cfg in DAY_CONFIG.items():
-        key      = str(day_idx)
-        tasks    = data.get(key, [])
-        is_today = (key == today_key)
-        label    = f"{cfg['emoji']}  {cfg['name']}  —  {cfg['category']}" + ("  ◀ today" if is_today else "")
-
-        with st.expander(label, expanded=is_today):
-            if not tasks:
-                st.caption("No tasks yet.")
-            else:
-                for i, task in enumerate(tasks):
-                    c1, c2 = st.columns([10, 1])
-                    with c1:
-                        weight = "**" if i < TASKS_PER_DAY else ""
-                        flags  = []
-                        if task.get("retire"):   flags.append("once")
-                        if task["done_count"]>0: flags.append(f"done {task['done_count']}×")
-                        suffix = f" *({', '.join(flags)})*" if flags else ""
-                        prefix = f"{i+1}. " if i < TASKS_PER_DAY else f"— "
-                        st.markdown(f"{prefix}{weight}{task['text']}{weight}{suffix}")
-                    with c2:
-                        if st.button("✕", key=f"wdel_{task['id']}"):
-                            delete_task(data, key, task["id"])
-                            st.rerun()
-
-
-def view_add(data):
-    st.markdown('<div class="section-label" style="margin-top:2rem">New task</div>', unsafe_allow_html=True)
-
-    day_options = {
-        f"{cfg['emoji']}  {cfg['name']}  —  {cfg['category']}": str(i)
-        for i, cfg in DAY_CONFIG.items()
-    }
-
-    selected_label = st.selectbox("Which day?", list(day_options.keys()))
-    selected_key   = day_options[selected_label]
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    task_text = st.text_input("Task", placeholder="e.g. Read 2 chapters of textbook", label_visibility="collapsed")
-    retire    = st.checkbox("One-time task — remove after done (default: rotates back to queue)")
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    if st.button("Add task →", use_container_width=True):
-        if task_text.strip():
-            nid = get_next_id(data)
-            data.setdefault(selected_key, []).append(
-                {"id": nid, "text": task_text.strip(), "done_count": 0, "retire": retire}
-            )
-            save_tasks(data)
-            st.success(f"Added to {DAY_CONFIG[int(selected_key)]['name']}.")
-            st.rerun()
-        else:
-            st.warning("Please type a task first.")
-
-
-# ── Actions ───────────────────────────────────────────────────────────────────
-def mark_done(data, day_key, task_id):
-    tasks = data.get(day_key, [])
-    for i, t in enumerate(tasks):
-        if t["id"] == task_id:
-            t["done_count"] += 1
-            if t.get("retire"):
-                tasks.pop(i)
-            else:
-                tasks.append(tasks.pop(i))
-            break
-    save_tasks(data)
-
-def delete_task(data, day_key, task_id):
-    data[day_key] = [t for t in data.get(day_key, []) if t["id"] != task_id]
-    save_tasks(data)
-
-# ── Main ──────────────────────────────────────────────────────────────────────
-def main():
-    st.set_page_config(
-        page_title="One Thing Forward",
-        page_icon="🎯",
-        layout="centered",
-        initial_sidebar_state="collapsed",
+    st.markdown("**Navigate**")
+    page = st.radio(
+        "",
+        options=[
+            "📅  Today",
+            "📋  All Tasks",
+            "💡  Captures",
+            "🎬  Content Pipeline",
+            "📈  Finance",
+            "📺  Watch Queue",
+            "⚙️  Settings",
+        ],
+        label_visibility="collapsed",
     )
-    inject_css()
-    data = load_tasks()
 
-    t1, t2, t3 = st.tabs(["Today", "This Week", "Add Task"])
-    with t1: view_today(data)
-    with t2: view_week(data)
-    with t3: view_add(data)
+    st.markdown("<hr style='margin: 1rem 0;'>", unsafe_allow_html=True)
 
-if __name__ == "__main__":
-    main()
+    # Quick day override (for testing or planning)
+    st.markdown("**Preview another day**")
+    override_day = st.selectbox(
+        "",
+        options=[f"{DAY_CONFIG[i]['emoji']} {DAY_CONFIG[i]['name']}" for i in range(7)],
+        index=today_key,
+        label_visibility="collapsed",
+        key="day_override",
+    )
+    view_day = [DAY_CONFIG[i]["name"] for i in range(7)].index(override_day.split(" ", 1)[1])
+
+# ── Load Google Calendar events (cached per session) ─────────────────────────
+@st.cache_data(ttl=300)  # refresh every 5 minutes
+def load_calendar():
+    return get_today_events()
+
+events = load_calendar()
+
+# ── Route to correct page ─────────────────────────────────────────────────────
+
+if "Today" in page:
+    # Render the day view (use sidebar override if changed)
+    renderers = {
+        0: dv.render_monday,
+        1: dv.render_tuesday,
+        2: dv.render_wednesday,
+        3: dv.render_thursday,
+        4: dv.render_friday,
+        5: dv.render_saturday,
+        6: dv.render_sunday,
+    }
+    renderers[view_day](events)
+
+elif "All Tasks" in page:
+    st.markdown('<div class="page-header"><div class="page-title">All Tasks</div><div class="accent-rule"></div></div>', unsafe_allow_html=True)
+    for day_idx, cfg in DAY_CONFIG.items():
+        tasks = []
+        from modules.database import get_tasks
+        tasks = get_tasks(day_key=day_idx, status="pending")
+        label = f"{cfg['emoji']}  {cfg['name']}  —  {cfg['category']}"
+        if day_idx == today_key:
+            label += "  ◀ today"
+        with st.expander(label, expanded=(day_idx == today_key)):
+            if not tasks:
+                st.caption("No tasks.")
+            for i, t in enumerate(tasks):
+                c1, c2 = st.columns([10, 1])
+                with c1:
+                    w = "**" if i < 3 else ""
+                    flag = " *(once)*" if not t["recurring"] else ""
+                    done = f" *(done {t['done_count']}×)*" if t["done_count"] > 0 else ""
+                    st.markdown(f"{i+1}. {w}{t['text']}{w}{flag}{done}")
+                with c2:
+                    if st.button("✕", key=f"at_del_{t['id']}"):
+                        from modules.database import delete_task
+                        delete_task(t["id"])
+                        st.rerun()
+
+elif "Captures" in page:
+    st.markdown('<div class="page-header"><div class="page-title">💡 Quick Captures</div><div class="accent-rule"></div></div>', unsafe_allow_html=True)
+    from modules.database import get_captures, process_capture, delete_capture, add_capture
+
+    # Add capture
+    with st.expander("＋ New capture", expanded=True):
+        ct = st.text_area("What's on your mind?", key="new_cap_text", label_visibility="collapsed",
+                          placeholder="Idea, thought, task, content concept…", height=80)
+        ctype = st.selectbox("Type", ["idea", "note", "task", "content"], key="new_cap_type")
+        if st.button("Save capture →", key="save_cap"):
+            if ct.strip():
+                add_capture(ct.strip(), ctype)
+                st.success("Saved!")
+                st.rerun()
+
+    captures = get_captures(processed=False)
+    st.markdown(f'<div class="section-label">Inbox — {len(captures)} item(s)</div>', unsafe_allow_html=True)
+    if not captures:
+        st.caption("Inbox is clear.")
+    for c in captures:
+        with st.expander(f"{c['text'][:60]}…" if len(c['text']) > 60 else c['text']):
+            st.markdown(c["text"])
+            st.caption(f"Type: {c['type']}  ·  {c['created_at']}")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Mark processed", key=f"cp_{c['id']}"):
+                    process_capture(c["id"])
+                    st.rerun()
+            with col2:
+                if st.button("Delete", key=f"cdel_{c['id']}"):
+                    delete_capture(c["id"])
+                    st.rerun()
+
+elif "Content Pipeline" in page:
+    st.markdown('<div class="page-header"><div class="page-title">🎬 Content Pipeline</div><div class="accent-rule"></div></div>', unsafe_allow_html=True)
+    from modules.database import get_content, add_content, update_content_status, delete_content
+    from modules.styles import CONTENT_STATUSES, CONTENT_TYPES
+
+    # Add content
+    with st.expander("＋ Add content item"):
+        ct_title = st.text_input("Title", key="cp_title", label_visibility="collapsed",
+                                 placeholder="Video / reel / post title…")
+        ct_col1, ct_col2 = st.columns(2)
+        with ct_col1:
+            ct_type   = st.selectbox("Type",   CONTENT_TYPES,    key="cp_type")
+        with ct_col2:
+            ct_status = st.selectbox("Status", CONTENT_STATUSES, key="cp_status")
+        ct_notes = st.text_input("Notes", key="cp_notes", label_visibility="collapsed", placeholder="Notes…")
+        if st.button("Add", key="cp_add"):
+            if ct_title.strip():
+                add_content(ct_title.strip(), ct_type, ct_notes.strip())
+                db_mod = __import__("modules.database", fromlist=["update_content_status"])
+                st.rerun()
+
+    # Pipeline view grouped by status
+    for status in CONTENT_STATUSES:
+        items = get_content(status=status)
+        if not items:
+            continue
+        st.markdown(f'<div class="section-label">{status.upper()} — {len(items)}</div>', unsafe_allow_html=True)
+        for item in items:
+            c1, c2, c3 = st.columns([6, 2, 1])
+            with c1:
+                st.markdown(f"**{item['title']}** &nbsp; `{item['type']}`", unsafe_allow_html=True)
+                if item["notes"]:
+                    st.caption(item["notes"])
+            with c2:
+                new_s = st.selectbox("", CONTENT_STATUSES,
+                                     index=CONTENT_STATUSES.index(item["status"]),
+                                     key=f"pipe_{item['id']}", label_visibility="collapsed")
+                if new_s != item["status"]:
+                    update_content_status(item["id"], new_s)
+                    st.rerun()
+            with c3:
+                if st.button("✕", key=f"pipe_del_{item['id']}"):
+                    delete_content(item["id"])
+                    st.rerun()
+
+elif "Finance" in page:
+    st.markdown('<div class="page-header"><div class="page-title">📈 Finance & Markets</div><div class="accent-rule"></div></div>', unsafe_allow_html=True)
+    from modules.database import get_finance, add_finance, delete_finance
+    from modules.styles import FINANCE_TYPES
+
+    tab_w, tab_h, tab_r = st.tabs(["Watchlist", "Holdings", "Research"])
+    for tab, ftype in zip([tab_w, tab_h, tab_r], FINANCE_TYPES):
+        with tab:
+            items = get_finance(ftype=ftype)
+            if not items:
+                st.caption("Nothing here yet.")
+            for item in items:
+                c1, c2, c3 = st.columns([2, 6, 1])
+                with c1:
+                    st.markdown(f"**{item['ticker']}**")
+                with c2:
+                    st.caption(item["notes"] if item["notes"] else "—")
+                with c3:
+                    if st.button("✕", key=f"fin_{item['id']}"):
+                        delete_finance(item["id"])
+                        st.rerun()
+            with st.expander(f"＋ Add to {ftype}"):
+                ft = st.text_input("Ticker", key=f"fadd_t_{ftype}", label_visibility="collapsed",
+                                   placeholder="e.g. INFY, HDFC, Gold")
+                fn = st.text_input("Notes / thesis", key=f"fadd_n_{ftype}", label_visibility="collapsed",
+                                   placeholder="Why watching?")
+                if st.button("Add", key=f"fadd_btn_{ftype}"):
+                    if ft.strip():
+                        add_finance(ft.strip(), ftype=ftype, notes=fn.strip())
+                        st.rerun()
+
+elif "Watch Queue" in page:
+    st.markdown('<div class="page-header"><div class="page-title">📺 Watch Queue</div><div class="accent-rule"></div></div>', unsafe_allow_html=True)
+    from modules.database import get_watch_queue, add_watch_item, mark_watched, delete_watch_item
+    from modules.styles import WATCH_CATEGORIES
+
+    with st.expander("＋ Add video"):
+        wt = st.text_input("Title", key="wq_add_t", label_visibility="collapsed", placeholder="Video title…")
+        wu = st.text_input("URL", key="wq_add_u", label_visibility="collapsed", placeholder="https://…")
+        wc = st.selectbox("Category", [c for c in WATCH_CATEGORIES if c != "all"], key="wq_add_c")
+        if st.button("Add to queue", key="wq_main_add"):
+            if wt.strip():
+                add_watch_item(wt.strip(), wu.strip(), wc)
+                st.rerun()
+
+    cat_f = st.selectbox("Filter by category", WATCH_CATEGORIES, key="wq_main_filter")
+    items = get_watch_queue(category=cat_f if cat_f != "all" else None)
+    st.markdown(f'<div class="section-label">To watch — {len(items)}</div>', unsafe_allow_html=True)
+    if not items:
+        st.caption("Queue is empty.")
+    for item in items:
+        c1, c2, c3 = st.columns([7, 1, 1])
+        with c1:
+            if item["url"]:
+                st.markdown(f'<a href="{item["url"]}" target="_blank">{item["title"]}</a>', unsafe_allow_html=True)
+            else:
+                st.markdown(item["title"])
+            st.caption(item["category"])
+        with c2:
+            if st.button("✓", key=f"wmain_{item['id']}"):
+                mark_watched(item["id"])
+                st.rerun()
+        with c3:
+            if st.button("✕", key=f"wdmain_{item['id']}"):
+                delete_watch_item(item["id"])
+                st.rerun()
+
+elif "Settings" in page:
+    st.markdown('<div class="page-header"><div class="page-title">⚙️ Settings</div><div class="accent-rule"></div></div>', unsafe_allow_html=True)
+    st.markdown("#### Google Calendar")
+    st.info("""
+**Setup steps:**
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create a project → enable **Google Calendar API**
+3. Create **OAuth 2.0 credentials** (Desktop app) → download as `credentials.json`
+4. Place `credentials.json` in the project root folder
+5. Restart the app — a browser window will open for sign-in
+6. After signing in, `token.json` is created automatically — calendar is connected!
+
+If you skip this, the app works fully — just without calendar sync.
+    """)
+
+    st.markdown("#### Shoot Day")
+    from modules.database import get_shoot_day, set_shoot_day
+    shoot = get_shoot_day()
+    st.caption(f"This month's shoot day: **{shoot}**" if shoot else "Not set for this month.")
+    new_shoot = st.date_input("Set shoot day", key="settings_shoot")
+    if st.button("Save shoot day"):
+        set_shoot_day(str(new_shoot))
+        st.success(f"Shoot day set: {new_shoot}")
