@@ -4,7 +4,8 @@ Run with: streamlit run app.py
 """
 
 import streamlit as st
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+import zoneinfo
 
 from modules.database import init_db, get_conn
 from modules.styles import get_css, DAY_CONFIG
@@ -51,7 +52,8 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
     # Fresh time on every rerun
-    now = datetime.now()
+    IST = zoneinfo.ZoneInfo("Asia/Kolkata")
+    now = datetime.now(IST)
     st.markdown(f"""
     <div style='font-size: 0.78rem; color: #888; margin-bottom: 1rem; line-height: 1.7;'>
         <div>{now.strftime('%A, %d %B %Y')}</div>
