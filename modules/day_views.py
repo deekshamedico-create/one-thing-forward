@@ -632,37 +632,72 @@ def render_friday(events):
     _week_strip(4)
     _calendar_section(events)
 
-    # ── Quick Links ───────────────────────────────────────────────────────────
+    # Quick link to Excel sheet if configured
     if EXCEL_SHEET_URL:
         st.markdown(
-            f'<a href="{EXCEL_SHEET_URL}" target="_blank" style="'
-            f'display:inline-block;padding:0.6rem 1.1rem;background:#FFF;border:1px solid #E2E0DC;'
-            f'border-radius:8px;text-decoration:none;color:#1A1A1A;font-size:0.85rem;margin-bottom:1.2rem">'
-            f'📋 Open Holdings Excel Sheet ↗</a>',
+            '<a href="' + EXCEL_SHEET_URL + '" target="_blank" style="'
+            'display:inline-block;padding:0.6rem 1.1rem;background:#FFF;border:1px solid #E2E0DC;'
+            'border-radius:8px;text-decoration:none;color:#1A1A1A;font-size:0.85rem;margin-bottom:1.2rem">'
+            '📋 Open Holdings Excel Sheet ↗</a>',
             unsafe_allow_html=True
         )
 
-    # ── Friday Checklist ──────────────────────────────────────────────────────
+    # ── Friday Checklist — single list with checkboxes ────────────────────────
     st.markdown('<div class="section-label">Friday Checklist</div>', unsafe_allow_html=True)
 
-    rows_html = ""
-    for i, item in enumerate(FRIDAY_CHECKLIST):
-        tag_color = TAG_COLORS.get(item["tag"], "#888")
-        rows_html += f"""
-        <div class="task-row">
-            <span class="task-idx">{i+1}</span>
-            <div style="flex:1">
-                <div class="task-text">{item['text']}</div>
-                <div class="task-meta" style="color:{tag_color}">{item['tag']}</div>
-            </div>
-        </div>"""
-    st.markdown(rows_html, unsafe_allow_html=True)
+    # Track done state in session
+    if "fri_done" not in st.session_state:
+        st.session_state["fri_done"] = set()
 
-    st.markdown("<div style='margin-top:0.6rem'></div>", unsafe_allow_html=True)
-    cols = st.columns(2)
-    for i, item in enumerate(FRIDAY_CHECKLIST):
-        with cols[i % 2]:
-            st.checkbox(item["text"], key=f"fri_check_{item['id']}")
+    done_set = st.session_state["fri_done"]
+    todo  = [t for t in FRIDAY_CHECKLIST if t["id"] not in done_set]
+    done  = [t for t in FRIDAY_CHECKLIST if t["id"] in done_set]
+
+    # To-do items
+    if todo:
+        for item in todo:
+            tag_color = TAG_COLORS.get(item["tag"], "#888")
+            col1, col2 = st.columns([1, 16])
+            with col1:
+                if st.button("○", key="chk_" + item["id"], help="Mark done"):
+                    done_set.add(item["id"])
+                    st.rerun()
+            with col2:
+                st.markdown(
+                    '<div style="padding:0.45rem 0;border-bottom:1px solid #F0EFEC">'
+                    '<div style="font-size:0.95rem;color:#1A1A1A">' + item["text"] + '</div>'
+                    '<div style="font-size:0.65rem;color:' + tag_color + ';margin-top:2px">' + item["tag"] + '</div>'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
+    else:
+        st.markdown(
+            '<div style="padding:1rem 0;font-size:0.9rem;color:#2D6A4F">✓ All tasks done for today!</div>',
+            unsafe_allow_html=True
+        )
+
+    # Done items
+    if done:
+        st.markdown('<div class="section-label" style="margin-top:1.5rem">Done</div>', unsafe_allow_html=True)
+        for item in done:
+            col1, col2 = st.columns([1, 16])
+            with col1:
+                if st.button("✓", key="undo_" + item["id"], help="Mark undone"):
+                    done_set.discard(item["id"])
+                    st.rerun()
+            with col2:
+                st.markdown(
+                    '<div style="padding:0.45rem 0;border-bottom:1px solid #F0EFEC;opacity:0.4">'
+                    '<div style="font-size:0.95rem;color:#1A1A1A;text-decoration:line-through">' + item["text"] + '</div>'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
+
+    # Reset button
+    if done:
+        if st.button("↺ Reset all", key="fri_reset"):
+            st.session_state["fri_done"] = set()
+            st.rerun()
 
     st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
 
@@ -683,28 +718,24 @@ def render_friday(events):
             for item in items:
                 c1, c2, c3 = st.columns([2, 6, 1])
                 with c1:
-                    st.markdown(f'<div class="ticker">{item["ticker"]}</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="ticker">' + item["ticker"] + '</div>', unsafe_allow_html=True)
                 with c2:
                     st.caption(item["notes"] if item["notes"] else "—")
                 with c3:
-                    if st.button("✕", key=f"fd_{item['id']}"):
+                    if st.button("✕", key="fd_" + str(item["id"])):
                         db.delete_finance(item["id"])
                         st.rerun()
-
-            with st.expander(f"＋ Add to {ftype}"):
-                ft = st.text_input("Ticker / name", key=f"fi_{ftype}", label_visibility="collapsed",
+            with st.expander("＋ Add to " + ftype):
+                ft = st.text_input("Ticker / name", key="fi_" + ftype, label_visibility="collapsed",
                                    placeholder="e.g. INFY, HDFC, Gold…")
-                fn = st.text_input("Notes / thesis", key=f"fn_{ftype}", label_visibility="collapsed",
+                fn = st.text_input("Notes / thesis", key="fn_" + ftype, label_visibility="collapsed",
                                    placeholder="Why watching? Investment thesis?")
-                if st.button("Add", key=f"fadd_{ftype}"):
+                if st.button("Add", key="fadd_" + ftype):
                     if ft.strip():
                         db.add_finance(ft.strip(), ftype=ftype, notes=fn.strip())
                         st.rerun()
 
     _add_task_form(4)
-
-
-# ── Saturday — Flex / Catch-up ────────────────────────────────────────────────
 
 def render_saturday(events):
     _page_header(5, "Light day — clear the backlog")
