@@ -6,12 +6,12 @@ Run with: streamlit run app.py
 import streamlit as st
 from datetime import date, datetime
 
-from modules.database import init_db
+from modules.database import init_db, get_conn
 from modules.styles import get_css, DAY_CONFIG
 from modules.calendar_api import get_today_events
 from modules import day_views as dv
 
-# ── Page config (must be first Streamlit call) ────────────────────────────────
+# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="One Thing Forward",
     page_icon="🎯",
@@ -19,14 +19,21 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── Init database on first run ────────────────────────────────────────────────
+# ── Auto-refresh every 60s to keep clock live ─────────────────────────────────
+st.markdown("""
+<script>
+setTimeout(function(){ window.location.reload(); }, 60000);
+</script>
+""", unsafe_allow_html=True)
+
+# ── Init DB ───────────────────────────────────────────────────────────────────
 init_db()
 
-# ── Determine today ───────────────────────────────────────────────────────────
-today_key = date.today().weekday()  # 0=Mon … 6=Sun
+# ── Today ─────────────────────────────────────────────────────────────────────
+today_key = date.today().weekday()
 day_info  = DAY_CONFIG[today_key]
 
-# ── Inject CSS (day-specific accent colour) ───────────────────────────────────
+# ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown(get_css(today_key), unsafe_allow_html=True)
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -43,6 +50,7 @@ with st.sidebar:
     <hr style='margin: 0.8rem 0;'>
     """, unsafe_allow_html=True)
 
+    # Fresh time on every rerun
     now = datetime.now()
     st.markdown(f"""
     <div style='font-size: 0.78rem; color: #888; margin-bottom: 1rem; line-height: 1.7;'>
@@ -68,7 +76,6 @@ with st.sidebar:
 
     st.markdown("<hr style='margin: 1rem 0;'>", unsafe_allow_html=True)
 
-    # Quick day override (for testing or planning)
     st.markdown("**Preview another day**")
     override_day = st.selectbox(
         "",
@@ -79,17 +86,29 @@ with st.sidebar:
     )
     view_day = [DAY_CONFIG[i]["name"] for i in range(7)].index(override_day.split(" ", 1)[1])
 
-# ── Load Google Calendar events (cached per session) ─────────────────────────
-@st.cache_data(ttl=300)  # refresh every 5 minutes
+    # ── Reset DB tasks (clears seeded tasks so new defaults load) ─────────────
+    st.markdown("<hr style='margin: 1rem 0;'>", unsafe_allow_html=True)
+    with st.expander("⚙️ Database"):
+        st.caption("Reset tasks if you see old default tasks.")
+        if st.button("🔄 Reset default tasks", key="reset_tasks"):
+            conn = get_conn()
+            conn.execute("DELETE FROM tasks")
+            conn.commit()
+            conn.close()
+            from modules.database import _seed_default_tasks
+            _seed_default_tasks()
+            st.success("Tasks reset! Reload the page.")
+            st.rerun()
+
+# ── Calendar (cached 5 min) ───────────────────────────────────────────────────
+@st.cache_data(ttl=300)
 def load_calendar():
     return get_today_events()
 
 events = load_calendar()
 
-# ── Route to correct page ─────────────────────────────────────────────────────
-
+# ── Route pages ───────────────────────────────────────────────────────────────
 if "Today" in page:
-    # Render the day view (use sidebar override if changed)
     renderers = {
         0: dv.render_monday,
         1: dv.render_tuesday,
@@ -103,9 +122,8 @@ if "Today" in page:
 
 elif "All Tasks" in page:
     st.markdown('<div class="page-header"><div class="page-title">All Tasks</div><div class="accent-rule"></div></div>', unsafe_allow_html=True)
+    from modules.database import get_tasks, delete_task
     for day_idx, cfg in DAY_CONFIG.items():
-        tasks = []
-        from modules.database import get_tasks
         tasks = get_tasks(day_key=day_idx, status="pending")
         label = f"{cfg['emoji']}  {cfg['name']}  —  {cfg['category']}"
         if day_idx == today_key:
@@ -122,15 +140,12 @@ elif "All Tasks" in page:
                     st.markdown(f"{i+1}. {w}{t['text']}{w}{flag}{done}")
                 with c2:
                     if st.button("✕", key=f"at_del_{t['id']}"):
-                        from modules.database import delete_task
                         delete_task(t["id"])
                         st.rerun()
 
 elif "Captures" in page:
     st.markdown('<div class="page-header"><div class="page-title">💡 Quick Captures</div><div class="accent-rule"></div></div>', unsafe_allow_html=True)
     from modules.database import get_captures, process_capture, delete_capture, add_capture
-
-    # Add capture
     with st.expander("＋ New capture", expanded=True):
         ct = st.text_area("What's on your mind?", key="new_cap_text", label_visibility="collapsed",
                           placeholder="Idea, thought, task, content concept…", height=80)
@@ -140,7 +155,6 @@ elif "Captures" in page:
                 add_capture(ct.strip(), ctype)
                 st.success("Saved!")
                 st.rerun()
-
     captures = get_captures(processed=False)
     st.markdown(f'<div class="section-label">Inbox — {len(captures)} item(s)</div>', unsafe_allow_html=True)
     if not captures:
@@ -163,24 +177,19 @@ elif "Content Pipeline" in page:
     st.markdown('<div class="page-header"><div class="page-title">🎬 Content Pipeline</div><div class="accent-rule"></div></div>', unsafe_allow_html=True)
     from modules.database import get_content, add_content, update_content_status, delete_content
     from modules.styles import CONTENT_STATUSES, CONTENT_TYPES
-
-    # Add content
     with st.expander("＋ Add content item"):
         ct_title = st.text_input("Title", key="cp_title", label_visibility="collapsed",
                                  placeholder="Video / reel / post title…")
         ct_col1, ct_col2 = st.columns(2)
         with ct_col1:
-            ct_type   = st.selectbox("Type",   CONTENT_TYPES,    key="cp_type")
+            ct_type = st.selectbox("Type", CONTENT_TYPES, key="cp_type")
         with ct_col2:
             ct_status = st.selectbox("Status", CONTENT_STATUSES, key="cp_status")
         ct_notes = st.text_input("Notes", key="cp_notes", label_visibility="collapsed", placeholder="Notes…")
         if st.button("Add", key="cp_add"):
             if ct_title.strip():
                 add_content(ct_title.strip(), ct_type, ct_notes.strip())
-                db_mod = __import__("modules.database", fromlist=["update_content_status"])
                 st.rerun()
-
-    # Pipeline view grouped by status
     for status in CONTENT_STATUSES:
         items = get_content(status=status)
         if not items:
@@ -208,7 +217,6 @@ elif "Finance" in page:
     st.markdown('<div class="page-header"><div class="page-title">📈 Finance & Markets</div><div class="accent-rule"></div></div>', unsafe_allow_html=True)
     from modules.database import get_finance, add_finance, delete_finance
     from modules.styles import FINANCE_TYPES
-
     tab_w, tab_h, tab_r = st.tabs(["Watchlist", "Holdings", "Research"])
     for tab, ftype in zip([tab_w, tab_h, tab_r], FINANCE_TYPES):
         with tab:
@@ -239,7 +247,6 @@ elif "Watch Queue" in page:
     st.markdown('<div class="page-header"><div class="page-title">📺 Watch Queue</div><div class="accent-rule"></div></div>', unsafe_allow_html=True)
     from modules.database import get_watch_queue, add_watch_item, mark_watched, delete_watch_item
     from modules.styles import WATCH_CATEGORIES
-
     with st.expander("＋ Add video"):
         wt = st.text_input("Title", key="wq_add_t", label_visibility="collapsed", placeholder="Video title…")
         wu = st.text_input("URL", key="wq_add_u", label_visibility="collapsed", placeholder="https://…")
@@ -248,7 +255,6 @@ elif "Watch Queue" in page:
             if wt.strip():
                 add_watch_item(wt.strip(), wu.strip(), wc)
                 st.rerun()
-
     cat_f = st.selectbox("Filter by category", WATCH_CATEGORIES, key="wq_main_filter")
     items = get_watch_queue(category=cat_f if cat_f != "all" else None)
     st.markdown(f'<div class="section-label">To watch — {len(items)}</div>', unsafe_allow_html=True)
@@ -281,11 +287,8 @@ elif "Settings" in page:
 3. Create **OAuth 2.0 credentials** (Desktop app) → download as `credentials.json`
 4. Place `credentials.json` in the project root folder
 5. Restart the app — a browser window will open for sign-in
-6. After signing in, `token.json` is created automatically — calendar is connected!
-
-If you skip this, the app works fully — just without calendar sync.
+6. After signing in, `token.json` is created automatically
     """)
-
     st.markdown("#### Shoot Day")
     from modules.database import get_shoot_day, set_shoot_day
     shoot = get_shoot_day()
