@@ -42,22 +42,40 @@ def _page_header(day_key, subtitle=""):
 
 def _calendar_section(events):
     st.markdown('<div class="section-label">Today\'s Schedule</div>', unsafe_allow_html=True)
-    if not events:
-        st.caption("No Google Calendar events today — or calendar not connected.")
+    if events:
+        html = ""
+        for e in events:
+            loc = '<div class="cal-location">\U0001f4cd ' + e["location"] + '</div>' if e.get("location") else ""
+            t   = e["start_time"]
+            ti  = e["title"]
+            html += '<div class="cal-event"><div class="cal-time">' + t + '</div><div><div class="cal-title">' + ti + '</div>' + loc + '</div></div>'
+        st.markdown(html, unsafe_allow_html=True)
         return
-    html = ""
-    for e in events:
-        loc = f'<div class="cal-location">📍 {e["location"]}</div>' if e.get("location") else ""
-        html += f"""
-        <div class="cal-event">
-            <div class="cal-time">{e['start_time']}</div>
-            <div>
-                <div class="cal-title">{e['title']}</div>
-                {loc}
-            </div>
-        </div>"""
-    st.markdown(html, unsafe_allow_html=True)
-
+    today_str    = str(date.today())
+    sched_key    = "sched_" + today_str
+    saved        = st.session_state.get(sched_key, "")
+    with st.expander("+ Add schedule for today", expanded=False):
+        new_val = st.text_area(
+            "sched", value=saved,
+            key="sched_ta_" + today_str,
+            label_visibility="collapsed",
+            placeholder="9:00 AM - OPD\n11:30 AM - Surgery\n2:00 PM - Meeting",
+            height=120,
+        )
+        if st.button("Save", key="sched_btn_" + today_str):
+            st.session_state[sched_key] = new_val
+            st.rerun()
+    if saved:
+        html = ""
+        for line in [l.strip() for l in saved.split("\n") if l.strip()]:
+            parts = line.replace(" - ", " — ").split(" — ", 1)
+            if len(parts) == 2:
+                html += '<div class="cal-event"><div class="cal-time">' + parts[0] + '</div><div class="cal-title">' + parts[1] + '</div></div>'
+            else:
+                html += '<div class="cal-event"><div class="cal-time">·</div><div class="cal-title">' + line + '</div></div>'
+        st.markdown(html, unsafe_allow_html=True)
+    else:
+        st.caption("No schedule added. Tap above to add.")
 
 def _task_section(day_key, label="Focus tasks"):
     tasks = db.get_tasks(day_key=day_key, status="pending")
