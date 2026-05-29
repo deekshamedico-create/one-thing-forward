@@ -103,11 +103,8 @@ with st.sidebar:
             st.rerun()
 
 # ── Calendar (cached 5 min) ───────────────────────────────────────────────────
-@st.cache_data(ttl=300)
-def load_calendar():
-    return get_today_events()
-
-events = load_calendar()
+# No cache — needs st.secrets access at runtime
+events = get_today_events()
 
 # ── Route pages ───────────────────────────────────────────────────────────────
 if "Today" in page:
