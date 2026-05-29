@@ -376,76 +376,142 @@ def render_monday(events):
 
 # ── Tuesday — Content ─────────────────────────────────────────────────────────
 
+# ── Tuesday config ────────────────────────────────────────────────────────────
+
+TUESDAY_TASKS = [
+    {"id": "t1", "text": "Research content topics + update content calendar", "tag": "strategy"},
+    {"id": "t2", "text": "Schedule content on YouTube",                        "tag": "publish"},
+    {"id": "t3", "text": "Schedule content on Meta (Instagram/Facebook)",      "tag": "publish"},
+    {"id": "t4", "text": "Script writing",                                     "tag": "create"},
+    {"id": "t5", "text": "LinkedIn post",                                      "tag": "create"},
+    {"id": "t6", "text": "Website blog",                                       "tag": "create"},
+    {"id": "t7", "text": "Video editing (if time available)",                  "tag": "editing"},
+    {"id": "t8", "text": "Thumbnails → carry to Thursday if needed",           "tag": "thursday"},
+]
+
+TUESDAY_TAG_COLORS = {
+    "strategy": "#1D4E89",
+    "publish":  "#2D6A4F",
+    "create":   "#7B341E",
+    "editing":  "#4A235A",
+    "thursday": "#B5451B",
+}
+
+
+def _get_tuesday_tasks():
+    from datetime import date
+    today    = date.today()
+    week_num = today.isocalendar()[1]
+    total    = len(TUESDAY_TASKS)
+    idx      = (week_num * 3) % total
+    return [TUESDAY_TASKS[i % total] for i in range(idx, idx + 3)]
+
+
 def render_tuesday(events):
     _page_header(1, "Content Engine Day")
     _week_strip(1)
     _calendar_section(events)
 
     # Quick capture banner
-    st.markdown("""
-    <div class="capture-banner">
-        <h4>⚡ Quick Capture</h4>
-        <p>Got an idea? Drop it here. Organise later.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        '<div style="background:#EEF4FF;border:1px solid #C7D9F5;border-radius:10px;'
+        'padding:0.9rem 1.1rem;margin-bottom:1.2rem">'
+        '<div style="font-size:0.65rem;font-weight:600;letter-spacing:0.15em;'
+        'text-transform:uppercase;color:#1D4E89;margin-bottom:6px">⚡ Quick Capture</div>'
+        '<div style="font-size:0.8rem;color:#444">Got a content idea? Save it instantly.</div>'
+        '</div>',
+        unsafe_allow_html=True
+    )
 
     cap_col1, cap_col2 = st.columns([5, 1])
     with cap_col1:
-        idea = st.text_input("Capture an idea", key="quick_cap", label_visibility="collapsed",
-                             placeholder="New content idea, script angle, thumbnail concept…")
+        idea = st.text_input("Capture", key="tue_cap", label_visibility="collapsed",
+                             placeholder="New idea, script angle, thumbnail concept…")
     with cap_col2:
-        ctype = st.selectbox("Type", ["idea", "script", "note", "content"], key="quick_cap_type",
+        ctype = st.selectbox("Type", ["idea", "script", "note"], key="tue_cap_type",
                              label_visibility="collapsed")
-    if st.button("Save →", key="quick_cap_btn"):
+    if st.button("Save →", key="tue_cap_btn"):
         if idea.strip():
             db.add_capture(idea.strip(), ctype)
             st.success("Captured!")
             st.rerun()
 
-    _task_section(1, "Content tasks")
+    # Task queue
+    st.markdown('<div class="section-label">This Week — Content Tasks</div>', unsafe_allow_html=True)
 
-    # Content pipeline summary
-    st.markdown('<div class="section-label">Content Pipeline</div>', unsafe_allow_html=True)
-    tab_r, tab_y, tab_l = st.tabs(["Reels", "YouTube", "LinkedIn"])
-    for tab, ctype in zip([tab_r, tab_y, tab_l], ["reel", "youtube", "linkedin"]):
-        with tab:
-            items = db.get_content(ctype=ctype)
-            if not items:
-                st.caption("Nothing here yet.")
-            for item in items:
-                status_cls = f"status-{item['status']}"
-                c1, c2, c3 = st.columns([6, 2, 1])
-                with c1:
-                    st.markdown(item["title"])
-                with c2:
-                    new_status = st.selectbox(
-                        "", CONTENT_STATUSES,
-                        index=CONTENT_STATUSES.index(item["status"]),
-                        key=f"cs_{item['id']}",
-                        label_visibility="collapsed"
-                    )
-                    if new_status != item["status"]:
-                        db.update_content_status(item["id"], new_status)
-                        st.rerun()
-                with c3:
-                    if st.button("✕", key=f"cd_{item['id']}"):
-                        db.delete_content(item["id"])
-                        st.rerun()
+    today_tasks = _get_tuesday_tasks()
 
-            with st.expander(f"＋ Add {ctype} idea"):
-                t = st.text_input("Title / concept", key=f"ci_{ctype}", label_visibility="collapsed",
-                                  placeholder="Content title…")
-                n = st.text_input("Notes (optional)", key=f"cn_{ctype}", label_visibility="collapsed",
-                                  placeholder="Notes…")
-                if st.button(f"Add", key=f"cadd_{ctype}"):
-                    if t.strip():
-                        db.add_content(t.strip(), ctype=ctype, notes=n.strip())
-                        st.rerun()
+    from datetime import date as _date
+    week_num = _date.today().isocalendar()[1]
+    total    = len(TUESDAY_TASKS)
+    next_idx = ((week_num + 1) * 3) % total
+    next_tasks = [TUESDAY_TASKS[i % total]["text"][:30] for i in range(next_idx, next_idx + 3)]
+    st.caption("Next week → " + " · ".join(next_tasks))
+
+    if "tue_done" not in st.session_state:
+        st.session_state["tue_done"] = set()
+    done_set = st.session_state["tue_done"]
+
+    todo = [t for t in today_tasks if t["id"] not in done_set]
+    done = [t for t in today_tasks if t["id"] in done_set]
+
+    if todo:
+        for item in todo:
+            tag_color = TUESDAY_TAG_COLORS.get(item["tag"], "#888")
+            col1, col2 = st.columns([1, 16])
+            with col1:
+                if st.button("○", key="tchk_" + item["id"]):
+                    done_set.add(item["id"])
+                    st.rerun()
+            with col2:
+                st.markdown(
+                    '<div style="padding:0.45rem 0;border-bottom:1px solid #F0EFEC">'
+                    '<div style="font-size:0.95rem;color:#1A1A1A">' + item["text"] + '</div>'
+                    '<div style="font-size:0.65rem;color:' + tag_color + ';margin-top:2px">' + item["tag"] + '</div>'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
+    else:
+        st.markdown(
+            '<div style="padding:1rem 0;font-size:0.9rem;color:#2D6A4F">✓ All done for this Tuesday!</div>',
+            unsafe_allow_html=True
+        )
+
+    if done:
+        st.markdown('<div class="section-label" style="margin-top:1.5rem">Done</div>', unsafe_allow_html=True)
+        for item in done:
+            col1, col2 = st.columns([1, 16])
+            with col1:
+                if st.button("✓", key="tundo_" + item["id"]):
+                    done_set.discard(item["id"])
+                    st.rerun()
+            with col2:
+                st.markdown(
+                    '<div style="padding:0.45rem 0;border-bottom:1px solid #F0EFEC;opacity:0.4">'
+                    '<div style="font-size:0.95rem;color:#1A1A1A;text-decoration:line-through">' + item["text"] + '</div>'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
+        if st.button("↺ Reset", key="tue_reset"):
+            st.session_state["tue_done"] = set()
+            st.rerun()
+
+    st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
+
+    with st.expander("📋 Full Tuesday queue"):
+        for item in TUESDAY_TASKS:
+            is_active = any(t["id"] == item["id"] for t in today_tasks)
+            marker    = "▶  " if is_active else "·  "
+            color     = "#1A1A1A" if is_active else "#BBB"
+            st.markdown(
+                '<div style="padding:0.4rem 0;border-bottom:1px solid #F5F5F3;'
+                'font-size:0.88rem;color:' + color + '">'
+                + marker + item["text"] + '</div>',
+                unsafe_allow_html=True
+            )
 
     _add_task_form(1)
 
-
-# ── Wednesday — Self Help ─────────────────────────────────────────────────────
 
 def render_wednesday(events):
     _page_header(2, "Learning & Self-Help Day")
