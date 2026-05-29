@@ -152,12 +152,226 @@ def _add_task_form(day_key):
 
 # ── Monday — Academics ────────────────────────────────────────────────────────
 
+# ── Monday config ─────────────────────────────────────────────────────────────
+
+PATIENT_SHEET_ID  = "1Dx9yCdRlHAXDV0HqdhMLgQNlVKLSGBVURm6R-KufV6A"
+PATIENT_SHEET_URL = "https://docs.google.com/spreadsheets/d/" + PATIENT_SHEET_ID + "/edit"
+
+# All Monday tasks — rotate 3 per week
+MONDAY_TASKS = [
+    {"id": "m1",  "text": "Read IJO article",                          "tag": "read"},
+    {"id": "m2",  "text": "Read JCRS abstract",                        "tag": "read"},
+    {"id": "m3",  "text": "Read JRS abstract",                         "tag": "read"},
+    {"id": "m4",  "text": "Read Newsletter",                           "tag": "read"},
+    {"id": "m5",  "text": "Watch 1 surgical video",                    "tag": "learning"},
+    {"id": "m6",  "text": "Add 1 patient to clinical case library",    "tag": "clinical"},
+]
+
+# Monthly tasks — first Monday of month
+MONDAY_MONTHLY = [
+    {"id": "m7",  "text": "Check BMC articles to review",              "tag": "review",  "freq": "monthly"},
+    {"id": "m8",  "text": "Check IJ articles to review",               "tag": "review",  "freq": "monthly"},
+    {"id": "m9",  "text": "Edit surgical video",                        "tag": "editing", "freq": "monthly"},
+]
+
+MONDAY_TAG_COLORS = {
+    "read":     "#2D6A4F",
+    "learning": "#1D4E89",
+    "clinical": "#7B341E",
+    "review":   "#4A235A",
+    "editing":  "#B5451B",
+}
+
+
+def _is_first_monday_of_month(today):
+    from datetime import timedelta
+    if today.weekday() != 0:
+        return False
+    first_day = today.replace(day=1)
+    days_until_monday = (0 - first_day.weekday()) % 7
+    from datetime import timedelta
+    first_monday = first_day + timedelta(days=days_until_monday)
+    return today == first_monday
+
+
+def _get_monday_tasks():
+    from datetime import date
+    today    = date.today()
+    week_num = today.isocalendar()[1]
+
+    # Pick 3 rotating tasks based on week number
+    # Cycle through all 6 tasks, showing 3 at a time
+    total = len(MONDAY_TASKS)
+    idx   = (week_num * 3) % total
+    rotating = [MONDAY_TASKS[i % total] for i in range(idx, idx + 3)]
+
+    # Monthly tasks if first Monday
+    monthly = []
+    if _is_first_monday_of_month(today):
+        monthly = MONDAY_MONTHLY
+
+    return rotating + monthly
+
+
+@st.cache_data(ttl=3600)
+def _load_patients():
+    """Fetch patient list from Google Sheet."""
+    try:
+        import requests, io
+        import pandas as pd
+        url = "https://docs.google.com/spreadsheets/d/" + PATIENT_SHEET_ID + "/export?format=csv&gid=0"
+        r   = requests.get(url, timeout=10)
+        r.raise_for_status()
+        df  = pd.read_csv(io.StringIO(r.text))
+        df.columns = [c.strip() for c in df.columns]
+        return df.to_dict("records")
+    except Exception:
+        return []
+
+
+def _get_this_week_patient():
+    """
+    Return the current patient. Stays until marked done.
+    Uses week number as seed for consistent pick within the week.
+    """
+    from datetime import date
+    import hashlib
+
+    # Check if user has marked a patient done this week
+    week_num  = date.today().isocalendar()[1]
+    state_key = "patient_done_week_" + str(week_num)
+    if st.session_state.get(state_key):
+        return None, None  # Already done this week
+
+    patients = _load_patients()
+    if not patients:
+        return None, None
+
+    # Pick patient based on week number — consistent within week
+    idx     = week_num % len(patients)
+    patient = patients[idx]
+    return patient, state_key
+
+
 def render_monday(events):
     _page_header(0, "Academic & Research Day")
     _week_strip(0)
     _calendar_section(events)
-    _task_section(0, "Academic focus")
+
+    # ── Patient of the week ───────────────────────────────────────────────────
+    patient, state_key = _get_this_week_patient()
+
+    st.markdown('<div class="section-label">Patient of the Week</div>', unsafe_allow_html=True)
+    if patient:
+        name      = str(patient.get("Name", patient.get("Patient Name", "Unknown")))
+        diagnosis = str(patient.get("Diagnosis", "")).strip()
+        notes     = str(patient.get("Notes", "")).strip()
+
+        diag_html  = '<div style="font-size:0.78rem;color:#888;margin-top:3px">' + diagnosis + '</div>' if diagnosis and diagnosis != "nan" else ""
+        notes_html = '<div style="font-size:0.75rem;color:#AAA;margin-top:2px">' + notes + '</div>' if notes and notes != "nan" else ""
+
+        col1, col2 = st.columns([12, 2])
+        with col1:
+            st.markdown(
+                '<div style="background:#F5F0FF;border:1px solid #E0D5F5;border-radius:10px;'
+                'padding:0.9rem 1.1rem;margin-bottom:1rem">'
+                '<div style="font-size:0.65rem;font-weight:600;letter-spacing:0.15em;'
+                'text-transform:uppercase;color:#4A235A;margin-bottom:3px">Add to case library</div>'
+                '<div style="font-size:1.1rem;font-weight:600;color:#1A1A1A">' + name + '</div>'
+                + diag_html + notes_html +
+                '</div>',
+                unsafe_allow_html=True
+            )
+        with col2:
+            if st.button("✓ Done", key="patient_done_btn"):
+                st.session_state[state_key] = True
+                st.cache_data.clear()
+                st.rerun()
+
+        st.markdown(
+            '<a href="' + PATIENT_SHEET_URL + '" target="_blank" '
+            'style="font-size:0.78rem;color:#4A235A">Open patient sheet ↗</a>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            '<div style="padding:0.6rem 0;font-size:0.88rem;color:#2D6A4F">'
+            '✓ Patient added this week!</div>',
+            unsafe_allow_html=True
+        )
+
+    # ── Monday Task Queue ─────────────────────────────────────────────────────
+    st.markdown('<div class="section-label">This Week — Academic Tasks</div>', unsafe_allow_html=True)
+
+    today_tasks = _get_monday_tasks()
+
+    if "mon_done" not in st.session_state:
+        st.session_state["mon_done"] = set()
+    done_set = st.session_state["mon_done"]
+
+    todo = [t for t in today_tasks if t["id"] not in done_set]
+    done = [t for t in today_tasks if t["id"] in done_set]
+
+    if todo:
+        for item in todo:
+            tag_color = MONDAY_TAG_COLORS.get(item["tag"], "#888")
+            freq_note = " · monthly" if item.get("freq") else ""
+            col1, col2 = st.columns([1, 16])
+            with col1:
+                if st.button("○", key="mchk_" + item["id"], help="Mark done"):
+                    done_set.add(item["id"])
+                    st.rerun()
+            with col2:
+                st.markdown(
+                    '<div style="padding:0.45rem 0;border-bottom:1px solid #F0EFEC">'
+                    '<div style="font-size:0.95rem;color:#1A1A1A">' + item["text"] + '</div>'
+                    '<div style="font-size:0.65rem;color:' + tag_color + ';margin-top:2px">' + item["tag"] + freq_note + '</div>'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
+    else:
+        st.markdown(
+            '<div style="padding:1rem 0;font-size:0.9rem;color:#2D6A4F">✓ All done for this Monday!</div>',
+            unsafe_allow_html=True
+        )
+
+    if done:
+        st.markdown('<div class="section-label" style="margin-top:1.5rem">Done</div>', unsafe_allow_html=True)
+        for item in done:
+            col1, col2 = st.columns([1, 16])
+            with col1:
+                if st.button("✓", key="mundo_" + item["id"], help="Undo"):
+                    done_set.discard(item["id"])
+                    st.rerun()
+            with col2:
+                st.markdown(
+                    '<div style="padding:0.45rem 0;border-bottom:1px solid #F0EFEC;opacity:0.4">'
+                    '<div style="font-size:0.95rem;color:#1A1A1A;text-decoration:line-through">' + item["text"] + '</div>'
+                    '</div>',
+                    unsafe_allow_html=True
+                )
+        if st.button("↺ Reset", key="mon_reset"):
+            st.session_state["mon_done"] = set()
+            st.rerun()
+
+    st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
+
+    with st.expander("📋 Full Monday queue"):
+        all_tasks = MONDAY_TASKS + MONDAY_MONTHLY
+        for item in all_tasks:
+            is_active = any(t["id"] == item["id"] for t in today_tasks)
+            marker    = "▶  " if is_active else "·  "
+            color     = "#1A1A1A" if is_active else "#BBB"
+            freq      = " (monthly)" if item.get("freq") else ""
+            st.markdown(
+                '<div style="padding:0.4rem 0;border-bottom:1px solid #F5F5F3;'
+                'font-size:0.88rem;color:' + color + '">'
+                + marker + item["text"] + freq + '</div>',
+                unsafe_allow_html=True
+            )
+
     _add_task_form(0)
+
 
 
 # ── Tuesday — Content ─────────────────────────────────────────────────────────
