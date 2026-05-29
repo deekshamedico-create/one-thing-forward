@@ -43,6 +43,9 @@ def _page_header(day_key, subtitle=""):
 
 def _calendar_section(events):
     st.markdown('<div class="section-label">Today\'s Schedule</div>', unsafe_allow_html=True)
+    # Debug: show calendar fetch status
+    cal_err = st.session_state.get("cal_error", "not fetched yet")
+    st.caption(f"📅 Calendar: {cal_err}")
     if events:
         html = ""
         for e in events:
