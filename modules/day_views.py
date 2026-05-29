@@ -43,9 +43,6 @@ def _page_header(day_key, subtitle=""):
 
 def _calendar_section(events):
     st.markdown('<div class="section-label">Today\'s Schedule</div>', unsafe_allow_html=True)
-    # Debug: show calendar fetch status
-    cal_err = st.session_state.get("cal_error", "not fetched yet")
-    st.caption(f"📅 Calendar: {cal_err}")
     if events:
         html = ""
         for e in events:
@@ -327,17 +324,42 @@ def render_thursday(events):
 EXCEL_SHEET_URL = sh.SHEET_URL   # pulled from sheets.py
 
 # Friday checklist
-FRIDAY_CHECKLIST = [
-    {"id": "f1", "text": "Check portfolio",                                             "tag": "portfolio"},
-    {"id": "f2", "text": "Check Momentum portfolio",                                    "tag": "portfolio"},
-    {"id": "f3", "text": "FA analysis of all holdings → add to Excel sheet",            "tag": "research"},
-    {"id": "f4", "text": "Investor presentation screening — latest results + concalls", "tag": "research"},
-    {"id": "f5", "text": "Check pledge margins — pledge more if available",             "tag": "margins"},
-    {"id": "f6", "text": "Check buy / sell signals",                                    "tag": "signals"},
-    {"id": "f7", "text": "Check credit card bills",                                     "tag": "bills"},
-    {"id": "f8", "text": "Society maintenance bill (every 3 months)",                   "tag": "bills"},
-    {"id": "f9", "text": "Jio / VF bill",                                               "tag": "bills"},
+# ── Friday task config ───────────────────────────────────────────────────────
+# FIXED: shown every single Friday
+FRIDAY_FIXED = [
+    {"id": "f1", "text": "Check portfolio",        "tag": "portfolio"},
+    {"id": "f2", "text": "Check Momentum portfolio","tag": "portfolio"},
 ]
+
+# STOCK ROTATION LIST — 24 stocks, one per week
+# FA + Investor Presentation both done for the same stock each Friday
+FRIDAY_STOCKS = [
+    # Active Holdings
+    "BHEL", "NESTLEIND", "ABSLAMC", "PFC", "AARTIIND",
+    "AUROPHARMA", "KIRLPNU", "BALRAMCHIN", "ADANIPORTS", "DATAPATTNS",
+    "BHARATFORG",
+    # Watchlist
+    "HDFCBANK", "BAJAJFINSV", "BAJAJHFL", "BHARTIAIRTEL", "HCLTECH",
+    "HINDALCO", "ICICIBANK", "LT", "LUPIN", "M&M",
+    "NTPC", "RVNL", "SILVER",
+]
+
+# ROTATING: other non-stock tasks that still cycle
+FRIDAY_ROTATING = [
+    {"id": "f5", "text": "Check pledge margins — pledge more if available", "tag": "margins"},
+    {"id": "f6", "text": "Check buy / sell signals",                        "tag": "signals"},
+]
+
+# PERIODIC: shown only on first Friday of the month (or quarter)
+FRIDAY_PERIODIC = [
+    {"id": "f7",  "text": "Pay credit card bills",       "tag": "bills", "freq": "first-friday-monthly",    "months": 1},
+    {"id": "f9b", "text": "Pay Jio bill",                "tag": "bills", "freq": "first-friday-monthly",    "months": 1},
+    {"id": "f9c", "text": "Pay VF bill",                 "tag": "bills", "freq": "first-friday-monthly",    "months": 1},
+    {"id": "f9d", "text": "Pay GST",                     "tag": "bills", "freq": "first-friday-monthly",    "months": 1},
+    {"id": "f8",  "text": "Society maintenance bill",    "tag": "bills", "freq": "first-friday-quarterly",  "months": 3},
+]
+
+FRIDAY_CHECKLIST = FRIDAY_FIXED + FRIDAY_ROTATING + FRIDAY_PERIODIC
 
 TAG_COLORS = {
     "portfolio": "#1D4E89",
@@ -350,82 +372,165 @@ TAG_COLORS = {
 
 
 
+def _get_friday_tasks():
+    """
+    Build today's 3-task Friday list:
+    - 2 fixed (always)
+    - 1 rotating (cycles through FRIDAY_ROTATING week by week)
+    - Plus any periodic tasks that are due this week
+    """
+    from datetime import date
+    import math
+
+    today     = date.today()
+    # Use ISO week number to determine which rotating task to show
+    week_num  = today.isocalendar()[1]
+    rot_index = week_num % len(FRIDAY_ROTATING)
+    rotating  = [FRIDAY_ROTATING[rot_index]]
+
+    # Check periodic tasks
+    periodic_due = []
+    for t in FRIDAY_PERIODIC:
+        # Show in the first Friday of every N months
+        # Simple check: show if current month % months == 0
+        if today.month % t["months"] == 0:
+            periodic_due.append(t)
+
+    # Build final list: fixed + rotating + periodic (if due)
+    tasks = FRIDAY_FIXED + rotating + periodic_due
+    return tasks
+
+
+def _is_first_friday_of_month(today):
+    """Return True if today is the first Friday of the month."""
+    from datetime import date, timedelta
+    if today.weekday() != 4:  # 4 = Friday
+        return False
+    # First Friday = no Friday exists in same month before this date
+    first_day = today.replace(day=1)
+    # Find first Friday of month
+    days_until_friday = (4 - first_day.weekday()) % 7
+    first_friday = first_day + timedelta(days=days_until_friday)
+    return today == first_friday
+
+
+def _get_friday_tasks():
+    from datetime import date
+    today    = date.today()
+    week_num = today.isocalendar()[1]
+
+    # Stock of the week — cycles through 24 stocks
+    stock_idx   = week_num % len(FRIDAY_STOCKS)
+    this_stock  = FRIDAY_STOCKS[stock_idx]
+    next_stock  = FRIDAY_STOCKS[(stock_idx + 1) % len(FRIDAY_STOCKS)]
+
+    stock_tasks = [
+        {"id": "f3", "text": "FA analysis — " + this_stock + " → save to Google Sheet", "tag": "research", "stock": this_stock},
+        {"id": "f4", "text": "Investor Presentation — " + this_stock + " (latest results + concall)", "tag": "research", "stock": this_stock},
+    ]
+
+    # One other rotating task (pledge / buy-sell signals)
+    rot_idx  = week_num % len(FRIDAY_ROTATING)
+    rotating = [FRIDAY_ROTATING[rot_idx]]
+
+    # Periodic bills — first Friday of month/quarter
+    periodic_due = []
+    is_first_fri = _is_first_friday_of_month(today)
+    for t in FRIDAY_PERIODIC:
+        if t["freq"] == "first-friday-monthly":
+            if is_first_fri:
+                periodic_due.append(t)
+        elif t["freq"] == "first-friday-quarterly":
+            if is_first_fri and today.month in [1, 4, 7, 10]:
+                periodic_due.append(t)
+
+    return FRIDAY_FIXED + stock_tasks + rotating + periodic_due, this_stock, next_stock
+
+
 def render_friday(events):
     _page_header(4, "Finance & Markets Day")
     _week_strip(4)
     _calendar_section(events)
 
-    # Quick link to Excel sheet if configured
     if EXCEL_SHEET_URL:
-        st.markdown(
+        link_html = (
             '<a href="' + EXCEL_SHEET_URL + '" target="_blank" style="'
-            'display:inline-block;padding:0.6rem 1.1rem;background:#FFF;border:1px solid #E2E0DC;'
-            'border-radius:8px;text-decoration:none;color:#1A1A1A;font-size:0.85rem;margin-bottom:1.2rem">'
-            '📋 Open Holdings Excel Sheet ↗</a>',
-            unsafe_allow_html=True
+            'display:inline-block;padding:0.55rem 1rem;background:#FFF;'
+            'border:1px solid #E2E0DC;border-radius:8px;text-decoration:none;'
+            'color:#1A1A1A;font-size:0.85rem;margin-bottom:0.8rem">'
+            '📋 Open Holdings Excel Sheet ↗</a>'
         )
+        st.markdown(link_html, unsafe_allow_html=True)
 
-    # ── Friday Checklist — single list with checkboxes ────────────────────────
-    st.markdown('<div class="section-label">Friday Checklist</div>', unsafe_allow_html=True)
+    today_tasks, this_stock, next_stock = _get_friday_tasks()
+    st.markdown('<div class="section-label">Friday</div>', unsafe_allow_html=True)
+    stock_banner = '<div style="background:#FFF8F0;border:1px solid #F5E6D0;border-radius:10px;padding:0.9rem 1.1rem;margin-bottom:1rem"><div style="font-size:0.65rem;font-weight:600;letter-spacing:0.15em;text-transform:uppercase;color:#B5451B;margin-bottom:3px">Stock of the week</div><div style="font-size:1.3rem;font-weight:600;color:#1A1A1A">' + this_stock + '</div><div style="font-size:0.72rem;color:#AAA;margin-top:2px">Next week: ' + next_stock + '</div></div>'
+    st.markdown(stock_banner, unsafe_allow_html=True)
 
-    # Track done state in session
     if "fri_done" not in st.session_state:
         st.session_state["fri_done"] = set()
-
     done_set = st.session_state["fri_done"]
-    todo  = [t for t in FRIDAY_CHECKLIST if t["id"] not in done_set]
-    done  = [t for t in FRIDAY_CHECKLIST if t["id"] in done_set]
 
-    # To-do items
+    todo = [t for t in today_tasks if t["id"] not in done_set]
+    done = [t for t in today_tasks if t["id"] in done_set]
+
     if todo:
         for item in todo:
             tag_color = TAG_COLORS.get(item["tag"], "#888")
+            freq_note = ""
+            if item.get("freq") == "monthly":   freq_note = " · monthly"
+            if item.get("freq") == "quarterly": freq_note = " · quarterly"
             col1, col2 = st.columns([1, 16])
             with col1:
                 if st.button("○", key="chk_" + item["id"], help="Mark done"):
                     done_set.add(item["id"])
                     st.rerun()
             with col2:
-                st.markdown(
+                row = (
                     '<div style="padding:0.45rem 0;border-bottom:1px solid #F0EFEC">'
                     '<div style="font-size:0.95rem;color:#1A1A1A">' + item["text"] + '</div>'
-                    '<div style="font-size:0.65rem;color:' + tag_color + ';margin-top:2px">' + item["tag"] + '</div>'
-                    '</div>',
-                    unsafe_allow_html=True
+                    '<div style="font-size:0.65rem;color:' + tag_color + ';margin-top:2px">' + item["tag"] + freq_note + '</div>'
+                    '</div>'
                 )
+                st.markdown(row, unsafe_allow_html=True)
     else:
-        st.markdown(
-            '<div style="padding:1rem 0;font-size:0.9rem;color:#2D6A4F">✓ All tasks done for today!</div>',
-            unsafe_allow_html=True
-        )
+        st.markdown('<div style="padding:1rem 0;font-size:0.9rem;color:#2D6A4F">✓ All done for today!</div>', unsafe_allow_html=True)
 
-    # Done items
     if done:
         st.markdown('<div class="section-label" style="margin-top:1.5rem">Done</div>', unsafe_allow_html=True)
         for item in done:
             col1, col2 = st.columns([1, 16])
             with col1:
-                if st.button("✓", key="undo_" + item["id"], help="Mark undone"):
+                if st.button("✓", key="undo_" + item["id"], help="Undo"):
                     done_set.discard(item["id"])
                     st.rerun()
             with col2:
-                st.markdown(
+                row = (
                     '<div style="padding:0.45rem 0;border-bottom:1px solid #F0EFEC;opacity:0.4">'
                     '<div style="font-size:0.95rem;color:#1A1A1A;text-decoration:line-through">' + item["text"] + '</div>'
-                    '</div>',
-                    unsafe_allow_html=True
+                    '</div>'
                 )
-
-    # Reset button
-    if done:
-        if st.button("↺ Reset all", key="fri_reset"):
+                st.markdown(row, unsafe_allow_html=True)
+        if st.button("↺ Reset", key="fri_reset"):
             st.session_state["fri_done"] = set()
             st.rerun()
 
     st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
 
+    with st.expander("📋 View full queue — all 9 tasks"):
+        all_tasks = FRIDAY_FIXED + FRIDAY_ROTATING + FRIDAY_PERIODIC
+        for item in all_tasks:
+            is_active = any(t["id"] == item["id"] for t in today_tasks)
+            marker    = "▶  " if is_active else "·  "
+            freq      = " (" + item["freq"] + ")" if item.get("freq") else ""
+            color     = "#1A1A1A" if is_active else "#BBB"
+            st.markdown(
+                '<div style="padding:0.4rem 0;border-bottom:1px solid #F5F5F3;'
+                'font-size:0.88rem;color:' + color + '">'
+                + marker + item["text"] + freq + '</div>',
+                unsafe_allow_html=True
+            )
 
-    # ── Portfolio & Watchlist ─────────────────────────────────────────────────
     st.markdown('<div class="section-label">Portfolio & Watchlist</div>', unsafe_allow_html=True)
     tab_w, tab_h, tab_r = st.tabs(["Watchlist", "Holdings", "Research Notes"])
 
@@ -444,17 +549,18 @@ def render_friday(events):
                     if st.button("✕", key="fd_" + str(item["id"])):
                         db.delete_finance(item["id"])
                         st.rerun()
-            with st.expander("＋ Add to " + ftype):
-                ft = st.text_input("Ticker / name", key="fi_" + ftype, label_visibility="collapsed",
-                                   placeholder="e.g. INFY, HDFC, Gold…")
-                fn = st.text_input("Notes / thesis", key="fn_" + ftype, label_visibility="collapsed",
-                                   placeholder="Why watching? Investment thesis?")
+            with st.expander("+ Add to " + ftype):
+                ft = st.text_input("Ticker / name", key="fi_" + ftype,
+                                   label_visibility="collapsed", placeholder="e.g. INFY, HDFC…")
+                fn = st.text_input("Notes", key="fn_" + ftype,
+                                   label_visibility="collapsed", placeholder="Investment thesis?")
                 if st.button("Add", key="fadd_" + ftype):
                     if ft.strip():
                         db.add_finance(ft.strip(), ftype=ftype, notes=fn.strip())
                         st.rerun()
 
     _add_task_form(4)
+
 
 def render_saturday(events):
     _page_header(5, "Light day — clear the backlog")
