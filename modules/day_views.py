@@ -9,12 +9,57 @@ from modules import database as db
 from modules.database import (
     mark_task_done_persistent, unmark_task_done_persistent,
     get_done_tasks_persistent, reset_day_progress,
-    mark_patient_done, is_patient_done
+    mark_patient_done, is_patient_done,
+    add_carry_forward, get_carry_forward,
+    mark_carry_done, delete_carry
 )
 from modules.styles import DAY_CONFIG, DAY_COLORS, CONTENT_STATUSES
 from modules import sheets as sh
 
 TASKS_PER_DAY = 3
+
+DAY_NAMES = {
+    0: "Monday", 1: "Tuesday", 2: "Wednesday",
+    3: "Thursday", 4: "Friday", 5: "Saturday", 6: "Sunday"
+}
+
+
+def _carry_forward_button(task_text, from_day, item_key):
+    """Show a small carry-forward button next to a task."""
+    with st.popover("→", help="Carry to another day"):
+        st.caption("Move this task to:")
+        for day_key, day_name in DAY_NAMES.items():
+            if day_name.lower() != from_day:
+                if st.button(day_name, key=f"carry_{item_key}_{day_key}"):
+                    add_carry_forward(task_text, from_day, day_key)
+                    st.success(f"Moved to {day_name}!")
+                    st.rerun()
+
+
+def _show_carried_tasks(day_key):
+    """Show tasks carried forward to this day."""
+    carried = get_carry_forward(day_key)
+    if not carried:
+        return
+    st.markdown('<div class="section-label">Carried Forward</div>', unsafe_allow_html=True)
+    for task in carried:
+        col1, col2, col3 = st.columns([8, 1, 1])
+        with col1:
+            st.markdown(
+                '<div style="padding:0.45rem 0;border-bottom:1px solid #F0EFEC">'
+                '<div style="font-size:0.92rem;color:#1A1A1A">' + task["task_text"] + '</div>'
+                '<div style="font-size:0.65rem;color:#AAA;margin-top:2px">from ' + task["from_day"] + '</div>'
+                '</div>',
+                unsafe_allow_html=True
+            )
+        with col2:
+            if st.button("✓", key=f"carry_done_{task['id']}"):
+                mark_carry_done(task["id"])
+                st.rerun()
+        with col3:
+            if st.button("✕", key=f"carry_del_{task['id']}"):
+                delete_carry(task["id"])
+                st.rerun()
 
 
 # ── Shared components ─────────────────────────────────────────────────────────
@@ -310,6 +355,7 @@ def render_monday(events):
     _page_header(0, "Academic & Research Day")
     _week_strip(0)
     _calendar_section(events)
+    _show_carried_tasks(0)
 
     # ── Patient of the week ───────────────────────────────────────────────────
     patient, state_key = _get_this_week_patient()
@@ -367,7 +413,7 @@ def render_monday(events):
         for item in todo:
             tag_color = MONDAY_TAG_COLORS.get(item["tag"], "#888")
             freq_note = " · monthly" if item.get("freq") else ""
-            col1, col2 = st.columns([1, 16])
+            col1, col2, col3 = st.columns([1, 14, 1])
             with col1:
                 if st.button("○", key="mchk_" + item["id"], help="Mark done"):
                     mark_task_done_persistent("monday", item["id"])
@@ -380,6 +426,8 @@ def render_monday(events):
                     '</div>',
                     unsafe_allow_html=True
                 )
+            with col3:
+                _carry_forward_button(item["text"], "monday", item["id"])
     else:
         st.markdown(
             '<div style="padding:1rem 0;font-size:0.9rem;color:#2D6A4F">✓ All done for this Monday!</div>',
@@ -466,6 +514,7 @@ def render_tuesday(events):
     _page_header(1, "Content Engine Day")
     _week_strip(1)
     _calendar_section(events)
+    _show_carried_tasks(1)
 
     # Quick capture banner
     st.markdown(
@@ -511,7 +560,7 @@ def render_tuesday(events):
     if todo:
         for item in todo:
             tag_color = TUESDAY_TAG_COLORS.get(item["tag"], "#888")
-            col1, col2 = st.columns([1, 16])
+            col1, col2, col3 = st.columns([1, 14, 1])
             with col1:
                 if st.button("○", key="tchk_" + item["id"]):
                     mark_task_done_persistent("tuesday", item["id"])
@@ -524,6 +573,8 @@ def render_tuesday(events):
                     '</div>',
                     unsafe_allow_html=True
                 )
+            with col3:
+                _carry_forward_button(item["text"], "tuesday", item["id"])
     else:
         st.markdown(
             '<div style="padding:1rem 0;font-size:0.9rem;color:#2D6A4F">✓ All done for this Tuesday!</div>',
