@@ -372,3 +372,105 @@ def _seed_default_tasks():
         )
     conn.commit()
     conn.close()
+
+# ── Daily Progress (persists tick-offs across reloads) ────────────────────────
+
+def init_progress_table():
+    """Create daily_progress table if not exists."""
+    conn = get_conn()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS daily_progress (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            day_key    TEXT    NOT NULL,  -- e.g. 'friday', 'monday'
+            task_id    TEXT    NOT NULL,  -- e.g. 'f1', 'm3'
+            week_year  TEXT    NOT NULL,  -- e.g. '2026-W22'
+            done       INTEGER DEFAULT 1,
+            done_at    TEXT    DEFAULT (datetime('now')),
+            UNIQUE(day_key, task_id, week_year)
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def get_week_year():
+    """Return current week string like '2026-W22'."""
+    from datetime import date
+    d = date.today()
+    return f"{d.year}-W{d.isocalendar()[1]:02d}"
+
+
+def mark_task_done_persistent(day_key, task_id):
+    """Mark a checklist task as done for this week."""
+    init_progress_table()
+    conn = get_conn()
+    conn.execute(
+        "INSERT OR REPLACE INTO daily_progress (day_key, task_id, week_year) VALUES (?,?,?)",
+        (day_key, task_id, get_week_year())
+    )
+    conn.commit()
+    conn.close()
+
+
+def unmark_task_done_persistent(day_key, task_id):
+    """Unmark a checklist task."""
+    init_progress_table()
+    conn = get_conn()
+    conn.execute(
+        "DELETE FROM daily_progress WHERE day_key=? AND task_id=? AND week_year=?",
+        (day_key, task_id, get_week_year())
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_done_tasks_persistent(day_key):
+    """Return set of task_ids done this week for a given day."""
+    init_progress_table()
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT task_id FROM daily_progress WHERE day_key=? AND week_year=?",
+        (day_key, get_week_year())
+    ).fetchall()
+    conn.close()
+    return {r["task_id"] for r in rows}
+
+
+def reset_day_progress(day_key):
+    """Reset all progress for a day this week."""
+    init_progress_table()
+    conn = get_conn()
+    conn.execute(
+        "DELETE FROM daily_progress WHERE day_key=? AND week_year=?",
+        (day_key, get_week_year())
+    )
+    conn.commit()
+    conn.close()
+
+
+def mark_patient_done(week_year=None):
+    """Mark this week's patient as done."""
+    init_progress_table()
+    if not week_year:
+        week_year = get_week_year()
+    conn = get_conn()
+    conn.execute(
+        "INSERT OR REPLACE INTO daily_progress (day_key, task_id, week_year) VALUES (?,?,?)",
+        ("monday", "patient", week_year)
+    )
+    conn.commit()
+    conn.close()
+
+
+def is_patient_done(week_year=None):
+    """Check if this week's patient is done."""
+    init_progress_table()
+    if not week_year:
+        week_year = get_week_year()
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT id FROM daily_progress WHERE day_key='monday' AND task_id='patient' AND week_year=?",
+        (week_year,)
+    ).fetchone()
+    conn.close()
+    return row is not None
