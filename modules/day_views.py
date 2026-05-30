@@ -57,10 +57,17 @@ def _calendar_section(events):
             html += '<div class="cal-event"><div class="cal-time">' + t + '</div><div><div class="cal-title">' + ti + '</div>' + loc + '</div></div>'
         st.markdown(html, unsafe_allow_html=True)
         return
-    today_str    = str(date.today())
-    sched_key    = "sched_" + today_str
-    saved        = st.session_state.get(sched_key, "")
-    with st.expander("+ Add schedule for today", expanded=False):
+
+    today_str  = str(date.today())
+    sched_key  = "sched_" + today_str
+    done_key   = "sched_done_" + today_str
+
+    # Load saved schedule and done set from session state
+    saved    = st.session_state.get(sched_key, "")
+    done_set = st.session_state.get(done_key, set())
+
+    # Add/edit schedule — collapsed by default once saved
+    with st.expander("+ Add schedule for today", expanded=not bool(saved)):
         new_val = st.text_area(
             "sched", value=saved,
             key="sched_ta_" + today_str,
@@ -69,19 +76,60 @@ def _calendar_section(events):
             height=120,
         )
         if st.button("Save", key="sched_btn_" + today_str):
-            st.session_state[sched_key] = new_val
+            st.session_state[sched_key]  = new_val
+            st.session_state[done_key]   = set()  # reset done when schedule changes
             st.rerun()
+
+    # Show saved items as checklist
     if saved:
-        html = ""
-        for line in [l.strip() for l in saved.split("\n") if l.strip()]:
-            parts = line.replace(" - ", " — ").split(" — ", 1)
+        items = [l.strip() for l in saved.split("\n") if l.strip()]
+        todo  = [item for item in items if item not in done_set]
+        done  = [item for item in items if item in done_set]
+
+        # To-do items with done button
+        for item in todo:
+            parts = item.replace(" - ", " — ").split(" — ", 1)
             if len(parts) == 2:
-                html += '<div class="cal-event"><div class="cal-time">' + parts[0] + '</div><div class="cal-title">' + parts[1] + '</div></div>'
+                time_part, task_part = parts[0], parts[1]
             else:
-                html += '<div class="cal-event"><div class="cal-time">·</div><div class="cal-title">' + line + '</div></div>'
-        st.markdown(html, unsafe_allow_html=True)
+                time_part, task_part = "·", item
+
+            col1, col2, col3 = st.columns([2, 8, 1])
+            with col1:
+                st.markdown(
+                    '<div style="font-size:0.72rem;color:#B5451B;font-weight:500;padding-top:0.6rem">' + time_part + '</div>',
+                    unsafe_allow_html=True
+                )
+            with col2:
+                st.markdown(
+                    '<div style="font-size:0.92rem;color:#1A1A1A;padding-top:0.5rem;border-bottom:1px solid #F0EFEC">' + task_part + '</div>',
+                    unsafe_allow_html=True
+                )
+            with col3:
+                if st.button("○", key="sched_done_" + item[:20].replace(" ", "_")):
+                    done_set.add(item)
+                    st.session_state[done_key] = done_set
+                    st.rerun()
+
+        # Done items (greyed out)
+        if done:
+            for item in done:
+                parts = item.replace(" - ", " — ").split(" — ", 1)
+                task_part = parts[1] if len(parts) == 2 else item
+                col1, col2, col3 = st.columns([2, 8, 1])
+                with col2:
+                    st.markdown(
+                        '<div style="font-size:0.88rem;color:#CCC;padding-top:0.5rem;text-decoration:line-through">' + task_part + '</div>',
+                        unsafe_allow_html=True
+                    )
+                with col3:
+                    if st.button("✓", key="sched_undo_" + item[:20].replace(" ", "_")):
+                        done_set.discard(item)
+                        st.session_state[done_key] = done_set
+                        st.rerun()
     else:
         st.caption("No schedule added. Tap above to add.")
+
 
 def _task_section(day_key, label="Focus tasks"):
     tasks = db.get_tasks(day_key=day_key, status="pending")
