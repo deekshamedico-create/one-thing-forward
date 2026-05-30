@@ -6,6 +6,11 @@ Each function receives (data_module, calendar_events).
 import streamlit as st
 from datetime import date
 from modules import database as db
+from modules.database import (
+    mark_task_done_persistent, unmark_task_done_persistent,
+    get_done_tasks_persistent, reset_day_progress,
+    mark_patient_done, is_patient_done
+)
 from modules.styles import DAY_CONFIG, DAY_COLORS, CONTENT_STATUSES
 from modules import sheets as sh
 
@@ -238,10 +243,10 @@ def _get_this_week_patient():
     import hashlib
 
     # Check if user has marked a patient done this week
+    if is_patient_done():
+        return None, None  # Already done this week
     week_num  = date.today().isocalendar()[1]
     state_key = "patient_done_week_" + str(week_num)
-    if st.session_state.get(state_key):
-        return None, None  # Already done this week
 
     patients = _load_patients()
     if not patients:
@@ -284,7 +289,7 @@ def render_monday(events):
             )
         with col2:
             if st.button("✓ Done", key="patient_done_btn"):
-                st.session_state[state_key] = True
+                mark_patient_done()
                 st.cache_data.clear()
                 st.rerun()
 
@@ -305,9 +310,7 @@ def render_monday(events):
 
     today_tasks = _get_monday_tasks()
 
-    if "mon_done" not in st.session_state:
-        st.session_state["mon_done"] = set()
-    done_set = st.session_state["mon_done"]
+    done_set = get_done_tasks_persistent("monday")
 
     todo = [t for t in today_tasks if t["id"] not in done_set]
     done = [t for t in today_tasks if t["id"] in done_set]
@@ -319,7 +322,7 @@ def render_monday(events):
             col1, col2 = st.columns([1, 16])
             with col1:
                 if st.button("○", key="mchk_" + item["id"], help="Mark done"):
-                    done_set.add(item["id"])
+                    mark_task_done_persistent("monday", item["id"])
                     st.rerun()
             with col2:
                 st.markdown(
@@ -341,7 +344,7 @@ def render_monday(events):
             col1, col2 = st.columns([1, 16])
             with col1:
                 if st.button("✓", key="mundo_" + item["id"], help="Undo"):
-                    done_set.discard(item["id"])
+                    unmark_task_done_persistent("monday", item["id"])
                     st.rerun()
             with col2:
                 st.markdown(
@@ -351,7 +354,7 @@ def render_monday(events):
                     unsafe_allow_html=True
                 )
         if st.button("↺ Reset", key="mon_reset"):
-            st.session_state["mon_done"] = set()
+            reset_day_progress("monday")
             st.rerun()
 
     st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
@@ -385,8 +388,11 @@ TUESDAY_TASKS = [
     {"id": "t4", "text": "Script writing",                                     "tag": "create"},
     {"id": "t5", "text": "LinkedIn post",                                      "tag": "create"},
     {"id": "t6", "text": "Website blog",                                       "tag": "create"},
+]
+
+# Fixed every Tuesday — always shows
+TUESDAY_FIXED = [
     {"id": "t7", "text": "Video editing (if time available)",                  "tag": "editing"},
-    {"id": "t8", "text": "Thumbnails → carry to Thursday if needed",           "tag": "thursday"},
 ]
 
 TUESDAY_TAG_COLORS = {
@@ -403,8 +409,9 @@ def _get_tuesday_tasks():
     today    = date.today()
     week_num = today.isocalendar()[1]
     total    = len(TUESDAY_TASKS)
-    idx      = (week_num * 3) % total
-    return [TUESDAY_TASKS[i % total] for i in range(idx, idx + 3)]
+    idx      = (week_num * 2) % total
+    rotating = [TUESDAY_TASKS[i % total] for i in range(idx, idx + 2)]
+    return TUESDAY_FIXED + rotating
 
 
 def render_tuesday(events):
@@ -448,9 +455,7 @@ def render_tuesday(events):
     next_tasks = [TUESDAY_TASKS[i % total]["text"][:30] for i in range(next_idx, next_idx + 3)]
     st.caption("Next week → " + " · ".join(next_tasks))
 
-    if "tue_done" not in st.session_state:
-        st.session_state["tue_done"] = set()
-    done_set = st.session_state["tue_done"]
+    done_set = get_done_tasks_persistent("tuesday")
 
     todo = [t for t in today_tasks if t["id"] not in done_set]
     done = [t for t in today_tasks if t["id"] in done_set]
@@ -461,7 +466,7 @@ def render_tuesday(events):
             col1, col2 = st.columns([1, 16])
             with col1:
                 if st.button("○", key="tchk_" + item["id"]):
-                    done_set.add(item["id"])
+                    mark_task_done_persistent("tuesday", item["id"])
                     st.rerun()
             with col2:
                 st.markdown(
@@ -483,7 +488,7 @@ def render_tuesday(events):
             col1, col2 = st.columns([1, 16])
             with col1:
                 if st.button("✓", key="tundo_" + item["id"]):
-                    done_set.discard(item["id"])
+                    unmark_task_done_persistent("tuesday", item["id"])
                     st.rerun()
             with col2:
                 st.markdown(
@@ -493,13 +498,13 @@ def render_tuesday(events):
                     unsafe_allow_html=True
                 )
         if st.button("↺ Reset", key="tue_reset"):
-            st.session_state["tue_done"] = set()
+            reset_day_progress("tuesday")
             st.rerun()
 
     st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
 
     with st.expander("📋 Full Tuesday queue"):
-        for item in TUESDAY_TASKS:
+        for item in TUESDAY_FIXED + TUESDAY_TASKS:
             is_active = any(t["id"] == item["id"] for t in today_tasks)
             marker    = "▶  " if is_active else "·  "
             color     = "#1A1A1A" if is_active else "#BBB"
@@ -747,9 +752,7 @@ def render_friday(events):
     stock_banner = '<div style="background:#FFF8F0;border:1px solid #F5E6D0;border-radius:10px;padding:0.9rem 1.1rem;margin-bottom:1rem"><div style="font-size:0.65rem;font-weight:600;letter-spacing:0.15em;text-transform:uppercase;color:#B5451B;margin-bottom:3px">Stock of the week</div><div style="font-size:1.3rem;font-weight:600;color:#1A1A1A">' + this_stock + '</div><div style="font-size:0.72rem;color:#AAA;margin-top:2px">Next week: ' + next_stock + '</div></div>'
     st.markdown(stock_banner, unsafe_allow_html=True)
 
-    if "fri_done" not in st.session_state:
-        st.session_state["fri_done"] = set()
-    done_set = st.session_state["fri_done"]
+    done_set = get_done_tasks_persistent("friday")
 
     todo = [t for t in today_tasks if t["id"] not in done_set]
     done = [t for t in today_tasks if t["id"] in done_set]
@@ -792,7 +795,7 @@ def render_friday(events):
                 )
                 st.markdown(row, unsafe_allow_html=True)
         if st.button("↺ Reset", key="fri_reset"):
-            st.session_state["fri_done"] = set()
+            reset_day_progress("friday")
             st.rerun()
 
     st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
