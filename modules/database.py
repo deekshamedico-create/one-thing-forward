@@ -474,3 +474,60 @@ def is_patient_done(week_year=None):
     ).fetchone()
     conn.close()
     return row is not None
+
+
+# ── Carry Forward ─────────────────────────────────────────────────────────────
+
+def init_carry_table():
+    conn = get_conn()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS carry_forward (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_text   TEXT NOT NULL,
+            from_day    TEXT NOT NULL,
+            to_day      INTEGER NOT NULL,
+            week_year   TEXT NOT NULL,
+            done        INTEGER DEFAULT 0,
+            created_at  TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def add_carry_forward(task_text, from_day, to_day_key):
+    """Carry a task forward to another day."""
+    init_carry_table()
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO carry_forward (task_text, from_day, to_day, week_year) VALUES (?,?,?,?)",
+        (task_text, from_day, to_day_key, get_week_year())
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_carry_forward(to_day_key):
+    """Get all carried tasks for a given day this week."""
+    init_carry_table()
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM carry_forward WHERE to_day=? AND week_year=? AND done=0 ORDER BY created_at ASC",
+        (to_day_key, get_week_year())
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def mark_carry_done(carry_id):
+    conn = get_conn()
+    conn.execute("UPDATE carry_forward SET done=1 WHERE id=?", (carry_id,))
+    conn.commit()
+    conn.close()
+
+
+def delete_carry(carry_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM carry_forward WHERE id=?", (carry_id,))
+    conn.commit()
+    conn.close()
